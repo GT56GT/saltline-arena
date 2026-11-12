@@ -23,5 +23,19 @@ futures-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+alloy-primitives = { version = "1", features = ["k256", "serde", "rand"] }
+alloy-sol-types = { version = "1", features = ["eip712-serde"] }
+alloy-signer = "1"
+alloy-signer-local = "1"
+alloy = { version = "1", default-features = false, features = ["std", "provider-http", "reqwest-rustls-tls", "signer-local", "sol-types", "contract", "network"] }
+tower-http = { version = "0.6", features = ["cors"] }
+serde = { workspace = true }
+rand = "0.9"
+hex = "0.4"
+
 [dev-dependencies]
 tokio-tungstenite = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+

@@ -1,26 +1,26 @@
 //! Phase-1 gate: two players fight a full exchange over real WebSockets with no
 //! client-trusted state, and a tampered client cannot score, teleport or speed up.
 
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use game_core::Map;
 use glam::Vec3;
 use protocol::ServerMsg;
 use serde_json::{json, Value};
-use server::{router, spawn_ticker, Room, SharedRoom};
+use server::{router, spawn_ticker, test_state, SharedLobby};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-async fn start() -> (SharedRoom, String) {
-    let room: SharedRoom = Arc::new(Mutex::new(Room::new(Map::yard())));
+async fn start() -> (SharedLobby, String) {
+    // No bots in these tests: only the players we control.
+    let state = test_state(0).await;
+    let room: SharedLobby = state.lobby.clone();
     spawn_ticker(room.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let app = router(room.clone());
+    let app = router(state);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (room, format!("ws://{addr}/ws"))
 }
@@ -64,7 +64,8 @@ async fn fair_fight_ends_in_a_server_decided_kill() {
     let (mut a, ida) = join(&url, "Atul").await;
     let (mut b, idb) = join(&url, "Clover").await;
     {
-        let mut r = room.lock().unwrap();
+        let mut g = room.lock().unwrap();
+        let r = g.room_mut(1).unwrap();
         r.teleport(ida, Vec3::new(0.0, 0.0, 10.0), 0.0); // looking toward -Z
         r.teleport(idb, Vec3::new(0.0, 0.0, 0.0), std::f32::consts::PI);
     }
@@ -102,8 +103,8 @@ async fn tampered_client_cannot_claim_kills_hits_or_positions() {
     let (room, url) = start().await;
     let (mut cheat, idc) = join(&url, "Cheater").await;
     let (_victim_ws, idv) = join(&url, "Victim").await;
-    room.lock().unwrap().teleport(idc, Vec3::new(20.0, 0.0, 0.0), 0.0);
-    let before = room.lock().unwrap().state_of(idc).unwrap().pos;
+    room.lock().unwrap().room_mut(1).unwrap().teleport(idc, Vec3::new(20.0, 0.0, 0.0), 0.0);
+    let before = room.lock().unwrap().room_mut(1).unwrap().state_of(idc).unwrap().pos;
 
     // Messages a hacked client might try. None of them exist in the protocol.
     send(&mut cheat, json!({"t":"kill","killer":idc,"victim":idv})).await;
@@ -117,7 +118,8 @@ async fn tampered_client_cannot_claim_kills_hits_or_positions() {
     let errors = msgs.iter().filter(|m| matches!(m, ServerMsg::Error { .. })).count();
     assert_eq!(errors, 3, "each forged message is rejected");
     assert!(!msgs.iter().any(|m| matches!(m, ServerMsg::Kill { .. } | ServerMsg::Hit { .. })));
-    let r = room.lock().unwrap();
+    let mut g = room.lock().unwrap();
+    let r = g.room_mut(1).unwrap();
     assert_eq!(r.state_of(idv).unwrap().health, 100.0, "victim untouched");
     let after = r.state_of(idc).unwrap();
     assert!(after.pos.distance(before) < 0.01, "no teleport: {:?} -> {:?}", before, after.pos);
@@ -130,12 +132,13 @@ async fn speed_hacks_and_input_floods_gain_nothing() {
     let (mut cheat, idc) = join(&url, "Speedy").await;
     let (mut fair, idf) = join(&url, "Fair").await;
     {
-        let mut r = room.lock().unwrap();
+        let mut g = room.lock().unwrap();
+        let r = g.room_mut(1).unwrap();
         r.teleport(idc, Vec3::new(-25.0, 0.0, 25.0), 0.0);
         r.teleport(idf, Vec3::new(25.0, 0.0, 25.0), 0.0);
     }
-    let c0 = room.lock().unwrap().state_of(idc).unwrap().pos;
-    let f0 = room.lock().unwrap().state_of(idf).unwrap().pos;
+    let c0 = room.lock().unwrap().room_mut(1).unwrap().state_of(idc).unwrap().pos;
+    let f0 = room.lock().unwrap().room_mut(1).unwrap().state_of(idf).unwrap().pos;
     let started = std::time::Instant::now();
 
     // Cheater: 200 inputs per message with a huge movement vector, every tick.
@@ -154,7 +157,8 @@ async fn speed_hacks_and_input_floods_gain_nothing() {
     }
     tokio::time::sleep(Duration::from_millis(100)).await;
     let (c1, f1) = {
-        let r = room.lock().unwrap();
+        let mut g = room.lock().unwrap();
+    let r = g.room_mut(1).unwrap();
         (r.state_of(idc).unwrap().pos, r.state_of(idf).unwrap().pos)
     };
     let cheat_dist = (c1 - c0).length();

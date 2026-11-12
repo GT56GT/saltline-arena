@@ -8,7 +8,7 @@ use server::{Room, MAX_REWIND_TICKS};
 use tokio::sync::mpsc;
 
 fn room_with_two() -> (Room, u32, u32, mpsc::UnboundedReceiver<String>) {
-    let mut room = Room::new(Map::yard());
+    let mut room = Room::new(1, Map::yard());
     let (tx_a, rx_a) = mpsc::unbounded_channel();
     let (tx_b, _rx_b) = mpsc::unbounded_channel();
     std::mem::forget(_rx_b);

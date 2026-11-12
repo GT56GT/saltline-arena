@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 #[test]
 fn diagonal_long_shot_hits() {
-    let mut room = Room::new(Map::yard());
+    let mut room = Room::new(1, Map::yard());
     let (ta, mut ra) = mpsc::unbounded_channel();
     let (tb, rb) = mpsc::unbounded_channel();
     std::mem::forget(rb);

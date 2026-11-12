@@ -12,7 +12,12 @@ pub type PlayerId = u32;
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ClientMsg {
     /// First message on a connection.
-    Hello { name: String },
+    Hello {
+        name: String,
+        /// Session token from wallet sign-in; absent = guest.
+        #[serde(default)]
+        token: Option<String>,
+    },
     /// One or more ticks of input, oldest first.
     Input { inputs: Vec<Input> },
     Ping { c: u64 },
@@ -31,6 +36,11 @@ pub struct PlayerSnap {
     pub alive: bool,
     pub kills: u32,
     pub deaths: u32,
+    #[serde(default)]
+    pub bot: bool,
+    /// Equipped cosmetic id (visual only).
+    #[serde(default)]
+    pub cosmetic: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
