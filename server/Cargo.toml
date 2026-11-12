@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["game-core", "protocol", "server"]
+members = ["game-core", "protocol", "server", "game-wasm"]
 
 [workspace.package]
 edition = "2021"

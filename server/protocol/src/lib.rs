@@ -3,7 +3,7 @@
 //!
 //! Note what is NOT here: there is no client message that claims a position, a hit or a kill.
 
-use game_core::Input;
+use game_core::{Input, Map};
 use serde::{Deserialize, Serialize};
 
 pub type PlayerId = u32;
@@ -33,10 +33,11 @@ pub struct PlayerSnap {
     pub deaths: u32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ServerMsg {
-    Welcome { id: PlayerId, tick: u32, tick_hz: u32, kill_target: u32 },
+    /// Sent once on join, with the exact map the server simulates (the client draws and predicts on it).
+    Welcome { id: PlayerId, tick: u32, tick_hz: u32, kill_target: u32, map: Map },
     /// Authoritative world state. `ack` = last input seq the server applied for this client
     /// (the client replays newer inputs on top of it for prediction).
     Snapshot { tick: u32, ack: u32, ammo: u32, reloading: bool, players: Vec<PlayerSnap> },

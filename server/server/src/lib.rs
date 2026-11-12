@@ -86,7 +86,7 @@ impl Room {
         let id = self.next_id;
         self.next_id += 1;
         let sp = self.pick_spawn();
-        let _ = tx.send(ServerMsg::Welcome { id, tick: self.tick, tick_hz: TICK_HZ, kill_target: KILL_TARGET }.to_json());
+        let _ = tx.send(ServerMsg::Welcome { id, tick: self.tick, tick_hz: TICK_HZ, kill_target: KILL_TARGET, map: self.map.clone() }.to_json());
         self.broadcast(&ServerMsg::Joined { id, name: name.clone() });
         self.players.insert(
             id,
