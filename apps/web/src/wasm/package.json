@@ -1,0 +1,17 @@
+{
+  "name": "game-wasm",
+  "type": "module",
+  "description": "Browser bindings for game-core: client-side prediction with server reconciliation.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "files": [
+    "game_wasm_bg.wasm",
+    "game_wasm.js",
+    "game_wasm.d.ts"
+  ],
+  "main": "game_wasm.js",
+  "types": "game_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

@@ -19,7 +19,11 @@ async fn main() {
     }
     let contracts: serde_json::Value = serde_json::from_str(&env("CONTRACTS_JSON", "{}")).unwrap_or_default();
     let allowed_domains = env("ALLOWED_DOMAINS", "").split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-    let lobby = Arc::new(Mutex::new(server::Lobby::new(game_core::Map::yard, min_players)));
+    let map: fn() -> game_core::Map = if env("MAP", "harbour") == "yard" { game_core::Map::yard } else { game_core::Map::harbour };
+    let mut lobby = server::Lobby::new(map, min_players);
+    lobby.kill_target = env("KILL_TARGET", "30").parse().expect("KILL_TARGET");
+    lobby.match_ticks = env("MATCH_SECONDS", "480").parse::<u32>().expect("MATCH_SECONDS") * game_core::TICK_HZ;
+    let lobby = Arc::new(Mutex::new(lobby));
     let state = server::AppState { lobby, db, signer, allowed_domains, contracts };
 
     match server::settle::SettleConfig::from_env() {

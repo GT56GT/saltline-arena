@@ -76,6 +76,9 @@ pub struct Room {
     rng: u64,
     /// Finished matches waiting to be picked up by the lobby.
     pub finished: Vec<MatchSummary>,
+    pub kill_target: u32,
+    pub match_ticks: u32,
+    end_now: bool,
 }
 
 impl Room {
@@ -90,6 +93,9 @@ impl Room {
             history: VecDeque::new(),
             rng: 0x9E37_79B9_7F4A_7C15 ^ id,
             finished: Vec::new(),
+            kill_target: KILL_TARGET,
+            match_ticks: MATCH_TICKS,
+            end_now: false,
         }
     }
 
@@ -144,7 +150,7 @@ impl Room {
         let sp = self.pick_spawn();
         if let Some(tx) = &tx {
             let _ = tx.send(
-                ServerMsg::Welcome { id, tick: self.tick, tick_hz: TICK_HZ, kill_target: KILL_TARGET, map: self.map.clone() }.to_json(),
+                ServerMsg::Welcome { id, tick: self.tick, tick_hz: TICK_HZ, kill_target: self.kill_target, map: self.map.clone() }.to_json(),
             );
         }
         self.broadcast(&ServerMsg::Joined { id, name: name.clone() });
@@ -345,8 +351,14 @@ impl Room {
         }
 
         // 5. Match end: first to the kill target, or the clock runs out.
-        let leader = self.players.iter().max_by_key(|(_, p)| p.kills).map(|(id, p)| (*id, p.kills));
-        if leader.is_some_and(|(_, k)| k >= KILL_TARGET) || tick - self.match_start >= MATCH_TICKS {
+        // Same order as the recorded placings: most kills, then fewest deaths, then earliest joiner.
+        let leader = self
+            .players
+            .iter()
+            .min_by(|(ia, a), (ib, b)| b.kills.cmp(&a.kills).then(a.deaths.cmp(&b.deaths)).then(ia.cmp(ib)))
+            .map(|(id, p)| (*id, p.kills));
+        if self.end_now || leader.is_some_and(|(_, k)| k >= self.kill_target) || tick - self.match_start >= self.match_ticks {
+            self.end_now = false;
             let scores = self.players.iter().map(|(id, p)| (*id, p.kills, p.deaths)).collect();
             self.broadcast(&ServerMsg::MatchEnd { winner: leader.filter(|(_, k)| *k > 0).map(|l| l.0), scores });
             self.finished.push(MatchSummary {
@@ -415,7 +427,7 @@ impl Room {
 
     /// Ends the current match now (used by tests and admin tools).
     pub fn force_end(&mut self) {
-        self.match_start = self.tick.saturating_sub(MATCH_TICKS);
+        self.end_now = true;
     }
 
     pub fn state_of(&self, id: PlayerId) -> Option<PlayerState> {

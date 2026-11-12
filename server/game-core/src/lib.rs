@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub mod map;
 pub mod weapon;
 
-pub use map::{Aabb, Map};
+pub use map::{Aabb, Landmark, Map};
 pub use weapon::{Weapon, RIFLE};
 
 /// Simulation rate. Every input and every server step covers exactly one tick.
@@ -33,6 +33,8 @@ pub const GRAVITY: f32 = 22.0;
 pub const JUMP_SPEED: f32 = 7.2;
 pub const MAX_PITCH: f32 = 1.5;
 pub const MAX_HEALTH: f32 = 100.0;
+/// Kerbs, steps and low ledges up to this height are climbed automatically.
+pub const STEP_HEIGHT: f32 = 0.45;
 
 /// What a client is allowed to tell the server: intentions, never outcomes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -170,20 +172,49 @@ pub fn step_player(s: &mut PlayerState, input: &Input, map: &Map) {
     // Move one axis at a time and resolve against the map's boxes.
     let h = s.height();
     let mut p = s.pos;
-    p.x += s.vel.x * DT;
-    if map.overlaps(p, PLAYER_RADIUS, h) {
-        p.x = s.pos.x;
+    // Horizontal moves, one axis at a time; a blocked move may step up onto a low ledge.
+    let try_axis = |p: &mut Vec3, delta: Vec3, on_ground: bool| -> bool {
+        let moved = *p + delta;
+        if !map.overlaps(moved, PLAYER_RADIUS, h) {
+            *p = moved;
+            return true;
+        }
+        if on_ground {
+            let up = moved + Vec3::Y * STEP_HEIGHT;
+            if !map.overlaps(up, PLAYER_RADIUS, h) {
+                if let Some(floor) = map.floor_below(up, PLAYER_RADIUS) {
+                    let stepped = Vec3::new(moved.x, floor.max(p.y), moved.z);
+                    if floor - p.y <= STEP_HEIGHT + 1e-3 && !map.overlaps(stepped, PLAYER_RADIUS, h) {
+                        *p = stepped;
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    };
+    if !try_axis(&mut p, Vec3::new(s.vel.x * DT, 0.0, 0.0), s.on_ground) {
         s.vel.x = 0.0;
     }
-    p.z += s.vel.z * DT;
-    if map.overlaps(p, PLAYER_RADIUS, h) {
-        p.z = s.pos.z;
+    if !try_axis(&mut p, Vec3::new(0.0, 0.0, s.vel.z * DT), s.on_ground) {
         s.vel.z = 0.0;
     }
     let prev_y = p.y;
     p.y += s.vel.y * DT;
     s.on_ground = false;
-    if p.y <= 0.0 {
+    // Standing on a box top: stay on it while it is under our feet.
+    if s.vel.y <= 0.0 && p.y > 0.0 {
+        if let Some(top) = map.floor_below(Vec3::new(p.x, prev_y, p.z), PLAYER_RADIUS) {
+            if p.y <= top && prev_y >= top - 1e-3 {
+                p.y = top;
+                s.vel.y = 0.0;
+                s.on_ground = true;
+            }
+        }
+    }
+    if s.on_ground {
+        // landed on a box top above
+    } else if p.y <= 0.0 {
         p.y = 0.0;
         s.vel.y = 0.0;
         s.on_ground = true;
@@ -266,7 +297,7 @@ mod tests {
     use super::*;
 
     fn open_map() -> Map {
-        Map { min: Vec3::new(-50.0, 0.0, -50.0), max: Vec3::new(50.0, 20.0, 50.0), boxes: vec![], spawns: vec![] }
+        Map { min: Vec3::new(-50.0, 0.0, -50.0), max: Vec3::new(50.0, 20.0, 50.0), boxes: vec![], spawns: vec![], name: String::new(), sea_x: None, landmarks: vec![] }
     }
 
     #[test]
@@ -297,12 +328,25 @@ mod tests {
     #[test]
     fn walls_block_movement() {
         let mut map = open_map();
-        map.boxes.push(Aabb { min: Vec3::new(-5.0, 0.0, -3.0), max: Vec3::new(5.0, 3.0, -2.0) });
+        map.boxes.push(Aabb::new(Vec3::new(-5.0, 0.0, -3.0), Vec3::new(5.0, 3.0, -2.0)));
         let mut s = PlayerState::spawn(Vec3::ZERO, 0.0);
         for _ in 0..TICK_HZ * 2 {
             step_player(&mut s, &Input { mz: 1.0, ..Default::default() }, &map);
         }
         assert!(s.pos.z >= -2.0 + PLAYER_RADIUS - 1e-3, "went through wall: z = {}", s.pos.z);
+    }
+
+    #[test]
+    fn steps_up_kerbs_but_not_walls() {
+        let mut map = open_map();
+        map.boxes.push(Aabb::new(Vec3::new(-5.0, 0.0, -3.0), Vec3::new(5.0, 0.3, -2.0))); // kerb
+        map.boxes.push(Aabb::new(Vec3::new(-5.0, 0.0, -8.0), Vec3::new(5.0, 1.2, -7.0))); // wall
+        let mut s = PlayerState::spawn(Vec3::ZERO, 0.0);
+        for _ in 0..TICK_HZ * 2 {
+            step_player(&mut s, &Input { mz: 1.0, ..Default::default() }, &map);
+        }
+        assert!(s.pos.z < -3.0, "climbed the kerb: z = {}", s.pos.z);
+        assert!(s.pos.z > -7.0 + PLAYER_RADIUS - 0.01, "stopped by the wall: z = {}", s.pos.z);
     }
 
     #[test]

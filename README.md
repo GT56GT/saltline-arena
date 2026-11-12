@@ -4,9 +4,11 @@ Free-to-play, wallet-native PvP shooter. The server referees every match; the ch
 
 | Folder | What | Status |
 | --- | --- | --- |
-| `server/` | Rust workspace: `game-core` (shared rules), `protocol`, `server` (match server), `game-wasm` (rules for the browser) | Phase 1 ✅ |
-| `apps/web/` | React + react-three-fiber client | Playable prototype ✅ |
-| `contracts/` | Solidity + Foundry | Phase 3 |
+| `server/` | Rust: `game-core` (rules + Saltline harbour map), `protocol`, `server` (matches, bots, accounts, ratings, signing, settlement), `game-wasm` | ✅ |
+| `apps/web/` | React + react-three-fiber client: wallet sign-in, profile, leaderboard, cosmetics, game | ✅ |
+| `contracts/` | Solidity + Foundry: ArenaRegistry, Achievements, SeasonRanks, Cosmetics | ✅ (testnet deploy pending) |
+
+See [DEPLOY.md](DEPLOY.md) to put it online.
 
 ## Play locally
 ```sh

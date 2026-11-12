@@ -1,0 +1,29 @@
+# Render Blueprint: the Rust match server as a free Docker web service.
+# Free instances sleep after ~15 min idle (first visitor waits ~1 min) and have no persistent disk:
+# the SQLite database resets on redeploy. Attach a disk (paid) or move to a free VM for lasting stats.
+services:
+  - type: web
+    name: saltline-arena-server
+    runtime: docker
+    plan: free
+    rootDir: server
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: MIN_PLAYERS
+        value: "4"
+      - key: CHAIN_ID
+        value: "84532"
+      - key: ALLOWED_DOMAINS
+        value: saltline-arena.vercel.app
+      - key: SIGNER_KEY
+        sync: false # set in the dashboard; never commit it
+      - key: REGISTRY_ADDRESS
+        sync: false
+      - key: CONTRACTS_JSON
+        sync: false
+      - key: RPC_URL
+        sync: false
+      - key: RELAYER_KEY
+        sync: false

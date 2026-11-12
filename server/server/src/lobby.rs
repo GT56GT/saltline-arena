@@ -22,11 +22,22 @@ pub struct Lobby {
     bot_counter: usize,
     /// Finished matches waiting for the account system (ratings, history, chain).
     pub finished: Vec<MatchSummary>,
+    pub kill_target: u32,
+    pub match_ticks: u32,
 }
 
 impl Lobby {
     pub fn new(map: fn() -> Map, min_players: usize) -> Self {
-        Self { rooms: BTreeMap::new(), next_room: 1, min_players: min_players.min(MAX_PLAYERS), map, bot_counter: 0, finished: Vec::new() }
+        Self {
+            rooms: BTreeMap::new(),
+            next_room: 1,
+            min_players: min_players.min(MAX_PLAYERS),
+            map,
+            bot_counter: 0,
+            finished: Vec::new(),
+            kill_target: crate::room::KILL_TARGET,
+            match_ticks: crate::room::MATCH_TICKS,
+        }
     }
 
     /// Place a player: the busiest room that still has a human slot, or a fresh room.
@@ -40,7 +51,10 @@ impl Lobby {
             .unwrap_or_else(|| {
                 let id = self.next_room;
                 self.next_room += 1;
-                self.rooms.insert(id, Room::new(id, (self.map)()));
+                let mut room = Room::new(id, (self.map)());
+                room.kill_target = self.kill_target;
+                room.match_ticks = self.match_ticks;
+                self.rooms.insert(id, room);
                 id
             });
         let room = self.rooms.get_mut(&room_id).unwrap();

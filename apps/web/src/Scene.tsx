@@ -4,6 +4,7 @@ import { Html } from "@react-three/drei";
 import * as THREE from "three";
 import { client, type Remote } from "./client";
 import type { MapData } from "./protocol";
+import { COSMETICS } from "./cosmetics";
 
 const CONTAINER_COLORS = ["#8a3b22", "#2f5d62", "#b8862b", "#4a5257", "#6b2f2a", "#36544f"];
 const PLAYER_COLORS = ["#5ec8ff", "#9be36a", "#ff6fae", "#c79bff", "#ffd36a", "#6af0d0", "#ff8a5c"];
@@ -18,7 +19,7 @@ export function Scene() {
       onCreated={({ gl, scene }) => {
         gl.toneMapping = THREE.ACESFilmicToneMapping;
         scene.background = new THREE.Color("#1a2125");
-        scene.fog = new THREE.Fog("#1a2125", 35, 120);
+        scene.fog = new THREE.Fog("#1a2125", 45, 160);
       }}
     >
       <Lights />
@@ -41,52 +42,104 @@ function Lights() {
         color="#ffe2b8"
         castShadow
         shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-40}
-        shadow-camera-right={40}
-        shadow-camera-top={40}
-        shadow-camera-bottom={-40}
+        shadow-camera-left={-55}
+        shadow-camera-right={55}
+        shadow-camera-top={55}
+        shadow-camera-bottom={-55}
         shadow-bias={-0.0004}
       />
     </>
   );
 }
 
+// Surface palette, after the original Saltline terminal.
+const SURFACE: Record<string, { colors: string[]; rough: number; metal: number }> = {
+  metal: { colors: ["#8a3b22", "#2f5d62", "#b8862b", "#4a5257", "#6b2f2a", "#36544f", "#7d7f7a"], rough: 0.62, metal: 0.35 },
+  concrete: { colors: ["#6f6a62", "#5d5a55", "#7b766d"], rough: 0.92, metal: 0 },
+  wood: { colors: ["#6d5a3d", "#7a6444"], rough: 0.9, metal: 0 },
+  rubber: { colors: ["#1f2224"], rough: 0.95, metal: 0 },
+  dirt: { colors: ["#4b4134"], rough: 1, metal: 0 },
+};
+
 function Arena({ map }: { map: MapData }) {
   const size: [number, number] = [map.max[0] - map.min[0], map.max[2] - map.min[2]];
+  const cx = (map.min[0] + map.max[0]) / 2, cz = (map.min[2] + map.max[2]) / 2;
+  // Group boxes by look so the harbour's ~550 boxes draw as a handful of instanced meshes.
+  const groups = useMemo(() => {
+    const g = new Map<string, { color: string; rough: number; metal: number; mats: THREE.Matrix4[] }>();
+    map.boxes.forEach((b, i) => {
+      if (b.player_only) return; // invisible walls stay invisible
+      const s = SURFACE[b.surface ?? "metal"] ?? SURFACE.metal;
+      const tall = b.max[1] - b.min[1] > 1.5;
+      const color = b.surface ? s.colors[(i * 7 + Math.round(b.min[0] * 3 + b.min[2])) % s.colors.length] : tall ? CONTAINER_COLORS[i % CONTAINER_COLORS.length] : "#6d5a3d";
+      const key = `${color}|${s.rough}|${s.metal}`;
+      if (!g.has(key)) g.set(key, { color, rough: s.rough, metal: s.metal, mats: [] });
+      const m = new THREE.Matrix4().compose(
+        new THREE.Vector3((b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2),
+        new THREE.Quaternion(),
+        new THREE.Vector3(Math.max(0.01, b.max[0] - b.min[0]), Math.max(0.01, b.max[1] - b.min[1]), Math.max(0.01, b.max[2] - b.min[2])),
+      );
+      g.get(key)!.mats.push(m);
+    });
+    return [...g.values()];
+  }, [map]);
+  const unit = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
   return (
     <group>
-      {/* Wet asphalt yard with painted lane lines */}
-      <mesh rotation-x={-Math.PI / 2} receiveShadow>
-        <planeGeometry args={[size[0] + 40, size[1] + 40]} />
-        <meshStandardMaterial color="#23272a" roughness={0.82} metalness={0.05} />
+      {/* Wet asphalt apron */}
+      <mesh rotation-x={-Math.PI / 2} position={[cx, 0, cz]} receiveShadow>
+        <planeGeometry args={[size[0] + 6, size[1] + 6]} />
+        <meshStandardMaterial color="#23272a" roughness={0.75} metalness={0.08} />
       </mesh>
-      {[-15, 0, 15].map((x) => (
-        <mesh key={x} rotation-x={-Math.PI / 2} position={[x, 0.005, 0]}>
-          <planeGeometry args={[0.18, size[1]]} />
-          <meshBasicMaterial color="#b8862b" transparent opacity={0.35} />
+      {map.sea_x != null && (
+        <mesh rotation-x={-Math.PI / 2} position={[map.sea_x + 60, -0.6, cz]}>
+          <planeGeometry args={[120, size[1] + 200]} />
+          <meshStandardMaterial color="#14262b" roughness={0.18} metalness={0.6} />
         </mesh>
+      )}
+      {groups.map((grp) => (
+        <Boxes key={grp.color + grp.rough} geo={unit} {...grp} />
       ))}
-      {/* Boundary fence */}
-      <BoundaryFence map={map} />
-      {map.boxes.map((b, i) => {
-        const sx = b.max[0] - b.min[0], sy = b.max[1] - b.min[1], sz = b.max[2] - b.min[2];
-        const isCrate = sy < 1.5;
-        return (
-          <mesh
-            key={i}
-            position={[(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2]}
-            castShadow
-            receiveShadow
-          >
-            <boxGeometry args={[sx, sy, sz]} />
-            <meshStandardMaterial
-              color={isCrate ? "#6d5a3d" : CONTAINER_COLORS[i % CONTAINER_COLORS.length]}
-              roughness={isCrate ? 0.9 : 0.62}
-              metalness={isCrate ? 0 : 0.35}
-            />
-          </mesh>
-        );
-      })}
+      {(map.landmarks ?? []).map((l) => <Landmark key={l.name} l={l} />)}
+      {!map.sea_x && <BoundaryFence map={map} />}
+    </group>
+  );
+}
+
+function Boxes({ geo, color, rough, metal, mats }: { geo: THREE.BufferGeometry; color: string; rough: number; metal: number; mats: THREE.Matrix4[] }) {
+  const ref = useRef<THREE.InstancedMesh>(null);
+  useEffect(() => {
+    const m = ref.current!;
+    mats.forEach((x, i) => m.setMatrixAt(i, x));
+    m.instanceMatrix.needsUpdate = true;
+    m.computeBoundingSphere();
+  }, [mats]);
+  return (
+    <instancedMesh ref={ref} args={[geo, undefined, mats.length]} castShadow receiveShadow>
+      <meshStandardMaterial color={color} roughness={rough} metalness={metal} />
+    </instancedMesh>
+  );
+}
+
+function Landmark({ l }: { l: { name: string; kind: string; pos: [number, number, number] } }) {
+  const beacon = useRef<THREE.Mesh>(null);
+  useFrame(({ clock }) => {
+    if (beacon.current) (beacon.current.material as THREE.MeshBasicMaterial).opacity = 0.55 + 0.35 * Math.sin(clock.elapsedTime * 2.4);
+  });
+  if (l.kind === "boat") {
+    return (
+      <group position={[l.pos[0] + 3.2, -0.3, l.pos[2]]}>
+        <mesh castShadow><boxGeometry args={[3.2, 1.1, 8]} /><meshStandardMaterial color="#e8e4da" roughness={0.5} /></mesh>
+        <mesh position={[0, 1.1, -0.8]} castShadow><boxGeometry args={[2.4, 1.2, 2.8]} /><meshStandardMaterial color="#2f5d62" roughness={0.6} /></mesh>
+        <mesh ref={beacon} position={[0, 2.1, -0.8]}><sphereGeometry args={[0.18, 10, 8]} /><meshBasicMaterial color="#ffb347" transparent /></mesh>
+      </group>
+    );
+  }
+  return (
+    <group position={l.pos}>
+      <mesh position={[0, 0.9, 0]} castShadow><boxGeometry args={[0.7, 1.8, 0.5]} /><meshStandardMaterial color="#3a4044" metalness={0.5} roughness={0.5} /></mesh>
+      <mesh position={[0, 2.6, 0]}><cylinderGeometry args={[0.04, 0.04, 1.6, 6]} /><meshStandardMaterial color="#8d9aa3" /></mesh>
+      <mesh ref={beacon} position={[0, 3.45, 0]}><sphereGeometry args={[0.13, 10, 8]} /><meshBasicMaterial color="#ff5a40" transparent /></mesh>
     </group>
   );
 }
@@ -222,14 +275,18 @@ function Avatar({ r, color }: { r: Remote; color: string }) {
   const flash = useRef<THREE.Mesh>(null);
   const hp = useRef<HTMLDivElement>(null);
   const state = useRef({ phase: 0, lx: NaN, lz: NaN, fall: 0 });
+  const look = r.cosmetic ? COSMETICS[r.cosmetic] : undefined;
+  const visor = look?.slot === "visor" ? look.color : color;
+  const plates = look?.slot === "plates" ? look.color : "#4a5257";
   const mats = useMemo(
     () => ({
       suit: new THREE.MeshStandardMaterial({ color: "#2b3034", roughness: 0.85 }),
-      plate: new THREE.MeshStandardMaterial({ color: "#4a5257", roughness: 0.6, metalness: 0.35 }),
+      plate: new THREE.MeshStandardMaterial({ color: plates, roughness: 0.6, metalness: 0.35 }),
       accent: new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4 }),
+      visor: new THREE.MeshStandardMaterial({ color: visor, emissive: visor, emissiveIntensity: 0.6, metalness: 0.4 }),
       gun: new THREE.MeshStandardMaterial({ color: "#15181a", metalness: 0.6, roughness: 0.4 }),
     }),
-    [color],
+    [color, visor, plates],
   );
 
   useFrame((_, dt) => {
@@ -273,7 +330,7 @@ function Avatar({ r, color }: { r: Remote; color: string }) {
           <mesh material={mats.plate} castShadow>
             <sphereGeometry args={[0.15, 14, 10]} />
           </mesh>
-          <mesh position={[0, 0.01, -0.13]} material={mats.accent}>
+          <mesh position={[0, 0.01, -0.13]} material={mats.visor}>
             <boxGeometry args={[0.22, 0.07, 0.06]} />
           </mesh>
         </group>
@@ -296,7 +353,7 @@ function Avatar({ r, color }: { r: Remote; color: string }) {
       </group>
       <Html position={[0, 2.15, 0]} center distanceFactor={9} zIndexRange={[10, 0]} style={{ pointerEvents: "none" }}>
         <div className="tag">
-          <span style={{ color }}>{r.name}</span>
+          <span style={{ color }}>{r.name}{r.bot ? <em className="bot">bot</em> : null}</span>
           <i><b ref={hp} /></i>
         </div>
       </Html>

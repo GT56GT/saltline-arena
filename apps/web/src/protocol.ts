@@ -3,12 +3,16 @@
 export type PlayerId = number;
 export type V3 = [number, number, number];
 
-export interface Aabb { min: V3; max: V3 }
-export interface MapData { min: V3; max: V3; boxes: Aabb[]; spawns: { pos: V3; yaw: number }[] }
+export interface Aabb { min: V3; max: V3; player_only?: boolean; surface?: "concrete" | "metal" | "wood" | "rubber" | "dirt" }
+export interface MapData {
+  min: V3; max: V3; boxes: Aabb[]; spawns: { pos: V3; yaw: number }[];
+  name?: string; sea_x?: number | null; landmarks?: { name: string; kind: string; pos: V3 }[];
+}
 
 export interface PlayerSnap {
   id: PlayerId; name: string; pos: V3; vel: V3; yaw: number; pitch: number;
   crouch: boolean; hp: number; alive: boolean; kills: number; deaths: number;
+  bot?: boolean; cosmetic?: string | null;
 }
 
 export type ServerMsg =

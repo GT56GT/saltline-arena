@@ -3,6 +3,7 @@
 
 import init, { Predictor } from "./wasm/game_wasm.js";
 import { lookDir, type Input, type MapData, type PlayerId, type PlayerSnap, type ServerMsg, type V3 } from "./protocol";
+import { api, session, type Me } from "./api";
 
 export const TICK_HZ = 30;
 export const DT = 1 / TICK_HZ;
@@ -14,7 +15,7 @@ const MOUSE_SENS = 0.0022;
 let wasmReady: Promise<unknown> | null = null;
 
 interface Pose { t: number; pos: V3; yaw: number; pitch: number; crouch: boolean; alive: boolean }
-export interface Remote { id: PlayerId; name: string; buf: Pose[]; hp: number; alive: boolean; kills: number; deaths: number; firedAt: number }
+export interface Remote { id: PlayerId; name: string; buf: Pose[]; hp: number; alive: boolean; kills: number; deaths: number; firedAt: number; bot: boolean; cosmetic: string | null }
 export interface Tracer { from: V3; to: V3; born: number; mine: boolean }
 export interface FeedLine { id: number; text: string; mine: boolean; t: number }
 
@@ -56,6 +57,9 @@ export class GameClient {
   hitMarker = { t: -1, head: false, kill: false };
   hurt = { t: -1, from: null as V3 | null };
   banner = { text: "", t: -1 };
+  /** Signed-in player's profile after the last finished match (for the match-end card). */
+  result: { me: Me; before: number; t: number } | null = null;
+  profile: Me | null = null;
   private feedId = 0;
   private listeners = new Set<() => void>();
   private pingTimer = 0;
@@ -77,7 +81,8 @@ export class GameClient {
     await wasmReady;
     const ws = new WebSocket(url);
     this.ws = ws;
-    ws.onopen = () => ws.send(JSON.stringify({ t: "hello", name }));
+    ws.onopen = () => ws.send(JSON.stringify({ t: "hello", name, token: session.token ?? undefined }));
+    if (session.token) api.me().then((m) => { this.profile = m; }).catch(() => {});
     ws.onmessage = (ev) => {
       try {
         this.onMsg(JSON.parse(ev.data as string) as ServerMsg);
@@ -142,6 +147,9 @@ export class GameClient {
 
   private tick() {
     const p = this.predictor!;
+    // Never send a non-number aim (the server would reject the input).
+    if (!Number.isFinite(this.yaw)) this.yaw = 0;
+    if (!Number.isFinite(this.pitch)) this.pitch = 0;
     const k = this.keys;
     const mx = (k.has("KeyD") ? 1 : 0) - (k.has("KeyA") ? 1 : 0);
     const mz = (k.has("KeyW") ? 1 : 0) - (k.has("KeyS") ? 1 : 0);
@@ -190,6 +198,7 @@ export class GameClient {
     switch (m.t) {
       case "welcome": {
         this.id = m.id;
+        this.result = null;
         this.map = m.map;
         this.killTarget = m.kill_target;
         this.predictor = new Predictor(JSON.stringify(m.map));
@@ -243,6 +252,13 @@ export class GameClient {
         const w = m.winner;
         this.banner = { text: w == null ? "Match over" : w === this.id ? "You win the match" : `${this.nameOf(w)} wins the match`, t: now };
         this.notify();
+        // Rating changes are computed after the match is recorded; fetch them shortly after.
+        if (session.token && this.profile) {
+          const before = this.profile.stats.rating;
+          window.setTimeout(() => {
+            api.me().then((m) => { this.result = { me: m, before, t: performance.now() }; this.profile = m; this.notify(); }).catch(() => {});
+          }, 1500);
+        }
         break;
       }
       case "pong":
@@ -275,12 +291,12 @@ export class GameClient {
   private applyRemote(s: PlayerSnap, now: number) {
     let r = this.remotes.get(s.id);
     if (!r) {
-      r = { id: s.id, name: s.name, buf: [], hp: 100, alive: true, kills: 0, deaths: 0, firedAt: 0 };
+      r = { id: s.id, name: s.name, buf: [], hp: 100, alive: true, kills: 0, deaths: 0, firedAt: 0, bot: !!s.bot, cosmetic: s.cosmetic ?? null };
       this.remotes.set(s.id, r);
     }
     r.buf.push({ t: now, pos: s.pos, yaw: s.yaw, pitch: s.pitch, crouch: s.crouch, alive: s.alive });
     if (r.buf.length > 20) r.buf.shift();
-    Object.assign(r, { hp: s.hp, alive: s.alive, kills: s.kills, deaths: s.deaths, name: s.name });
+    Object.assign(r, { hp: s.hp, alive: s.alive, kills: s.kills, deaths: s.deaths, name: s.name, bot: !!s.bot, cosmetic: s.cosmetic ?? null });
   }
 
   /** A remote player's pose, interpolated INTERP_MS in the past. */
@@ -306,8 +322,8 @@ export class GameClient {
   }
 
   scoreboard() {
-    const rows = [{ id: this.id, name: `${this.name} (you)`, kills: this.me.kills, deaths: this.me.deaths, me: true }];
-    for (const r of this.remotes.values()) rows.push({ id: r.id, name: r.name, kills: r.kills, deaths: r.deaths, me: false });
+    const rows = [{ id: this.id, name: `${this.name} (you)`, kills: this.me.kills, deaths: this.me.deaths, me: true, bot: false }];
+    for (const r of this.remotes.values()) rows.push({ id: r.id, name: r.name, kills: r.kills, deaths: r.deaths, me: false, bot: r.bot });
     return rows.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
   }
 }

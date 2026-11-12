@@ -115,6 +115,10 @@ async fn client(socket: WebSocket, state: AppState) {
             }
             Some(ClientMsg::Hello { .. }) | None => {
                 bad += 1;
+                if bad == 1 {
+                    let why = serde_json::from_str::<ClientMsg>(text.as_str()).err().map(|e| e.to_string()).unwrap_or_else(|| "repeated hello".into());
+                    tracing::warn!("room {room_id} player {id}: rejected message ({why}): {:.200}", text.as_str());
+                }
                 let _ = tx.send(ServerMsg::Error { msg: "unexpected message".into() }.to_json());
                 if bad > MAX_BAD_MESSAGES {
                     break;
