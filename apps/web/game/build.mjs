@@ -39,11 +39,14 @@ const PATCHES = [
     'C.health<=0&&!i.arenaMove&&(C.alive=!1,z=0,C.sprinting=!1,i.events.emit("player:dead",{}))',
   ],
   [
-    "audio: per-channel volume (settings: music, ambience, effects) and ducking",
+    "audio: per-channel volume (settings), ducking, and recorded sounds in place of synthesized ones",
     "Object.assign(Re,{ctx:e,resume:yr,play:ze,",
     "Object.assign(Re,{setBus(n,v){let b=H[n];if(!b)return;b._base={world:1,near:.95,amb:.55,dry:1,music:.62}[n]*Math.max(0,Math.min(1,+v||0));let t=e.currentTime;b.gain.cancelScheduledValues(t);b.gain.setValueAtTime(b._base,t)}," +
       // duckBus: dip a channel to k of its level (attack a s), hold h s, recover over r s.
-      "duckBus(n,k,a,h,r){let b=H[n];if(!b)return;let base=b._base!=null?b._base:b.gain.value,t=e.currentTime;b._base=base;b.gain.cancelScheduledValues(t);b.gain.setValueAtTime(b.gain.value,t);b.gain.setTargetAtTime(base*k,t,a/3);b.gain.setTargetAtTime(base,t+a+h,r/3)},ctx:e,resume:yr,play:ze,",
+      "duckBus(n,k,a,h,r){let b=H[n];if(!b)return;let base=b._base!=null?b._base:b.gain.value,t=e.currentTime;b._base=base;b.gain.cancelScheduledValues(t);b.gain.setValueAtTime(b.gain.value,t);b.gain.setTargetAtTime(base*k,t,a/3);b.gain.setTargetAtTime(base,t+a+h,r/3)}," +
+      // setBuffers: recorded versions of a sound replace the synthesized ones (the engine generates
+      // only what is missing from its cache, so these win; the variant count follows the files).
+      "setBuffers(n,bs){let d=Go[n];if(!d||d.loop||!bs||!bs.length)return!1;bs.forEach((b,i)=>r.set(n+\"#\"+i,b));d.n=bs.length;Pe[n]=0;return!0},ctx:e,resume:yr,play:ze,",
   ],
   [
     "render: expose the quality presets to the settings menu",

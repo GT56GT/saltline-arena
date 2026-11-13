@@ -15,6 +15,7 @@ import { Avatar, makeKit, type Kit } from "./avatar";
 import { Operator, loadOperatorKit, type OperatorKit } from "./operator";
 import { getSettings, onSettings, type Settings } from "../settings";
 import { Footsteps, HEAR, moveOf } from "./footsteps";
+import { loadRecordedSounds, type SoundLoad } from "./sounds";
 
 const RESERVE = 90;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -208,6 +209,9 @@ export function attachRenderer(win: any, client: GameClient): () => void {
 
   // Other players' footsteps, jumps, landings and climbs: in 3D, by hearing distance, enemies first.
   const steps = new Footsteps(G);
+  // Recorded sound effects replace the synthesized ones as they arrive (see sounds.ts).
+  let soundLoad: SoundLoad | null = null;
+  loadRecordedSounds(G).then((r) => { soundLoad = r; }).catch(() => { /* keep synthesized */ });
   const climbHeard = new Map<number, boolean>();
   // An enemy step close by briefly lowers the ambience (sea, wind, rain) by about 4 dB.
   steps.onNearEnemy = () => { try { G.audio.duckBus && G.audio.duckBus("amb", 0.63, 0.03, 0.15, 0.4); } catch { /* */ } };
@@ -399,7 +403,7 @@ export function attachRenderer(win: any, client: GameClient): () => void {
   };
 
   // For tests and screenshots: build or inspect operator models directly.
-  win.__arena = { kit, Avatar, Operator, avatars, steps, get opKit() { return opKit; } };
+  win.__arena = { kit, Avatar, Operator, avatars, steps, get opKit() { return opKit; }, get sounds() { return soundLoad; } };
 
   // Overlay keys (scoreboard) and audio unlock happen inside the iframe.
   const keydown = (ev: KeyboardEvent) => {
