@@ -34,11 +34,16 @@ pub struct AppState {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/health", get(|| async { "saltline arena ok" }))
+        .route("/health", get(|| async { "hushline ok" }))
         .route("/stats", get(stats))
         .route("/ws", get(ws_upgrade))
         .merge(crate::api::routes())
-        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
         .with_state(state)
 }
 
@@ -48,13 +53,22 @@ async fn stats(State(s): State<AppState>) -> impl IntoResponse {
 }
 
 async fn ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.max_message_size(16 * 1024).on_upgrade(move |socket| client(socket, state))
+    ws.max_message_size(16 * 1024)
+        .on_upgrade(move |socket| client(socket, state))
 }
 
 pub fn clean_name(raw: &str) -> String {
-    let s: String = raw.chars().filter(|c| c.is_alphanumeric() || " _.-".contains(*c)).take(16).collect();
+    let s: String = raw
+        .chars()
+        .filter(|c| c.is_alphanumeric() || " _.-".contains(*c))
+        .take(16)
+        .collect();
     let s = s.trim().to_string();
-    if s.is_empty() { "Breacher".into() } else { s }
+    if s.is_empty() {
+        "Breacher".into()
+    } else {
+        s
+    }
 }
 
 async fn client(socket: WebSocket, state: AppState) {
@@ -65,7 +79,12 @@ async fn client(socket: WebSocket, state: AppState) {
     let hello = tokio::time::timeout(Duration::from_secs(15), stream.next()).await;
     let (mut name, token, req) = match hello {
         Ok(Some(Ok(Message::Text(t)))) => match ClientMsg::parse(t.as_str()) {
-            Some(ClientMsg::Hello { name, token, room, create }) => {
+            Some(ClientMsg::Hello {
+                name,
+                token,
+                room,
+                create,
+            }) => {
                 let req = match (create, room) {
                     (Some(cfg), _) => JoinReq::Create(cfg),
                     (None, Some(code)) if !code.trim().is_empty() => JoinReq::Code(code),
@@ -82,22 +101,40 @@ async fn client(socket: WebSocket, state: AppState) {
     if let Some(t) = token {
         if let Ok(Some(a)) = db::account_by_token(&state.db, &t).await {
             if a.banned {
-                let _ = sink.send(Message::Text(ServerMsg::Error { msg: "account suspended".into() }.to_json().into())).await;
+                let _ = sink
+                    .send(Message::Text(
+                        ServerMsg::Error {
+                            msg: "account suspended".into(),
+                        }
+                        .to_json()
+                        .into(),
+                    ))
+                    .await;
                 return;
             }
             if let Some(c) = &a.callsign {
                 name = c.clone();
             }
-            ident = Identity { account: Some(a.id), wallet: Some(a.wallet.clone()), cosmetic: a.cosmetic.clone() };
+            ident = Identity {
+                account: Some(a.id),
+                wallet: Some(a.wallet.clone()),
+                cosmetic: a.cosmetic.clone(),
+            };
         }
     }
 
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-    let joined = state.lobby.lock().unwrap().join_with(name, ident, tx.clone(), req);
+    let joined = state
+        .lobby
+        .lock()
+        .unwrap()
+        .join_with(name, ident, tx.clone(), req);
     let (room_id, id) = match joined {
         Ok(v) => v,
         Err(e) => {
-            let _ = sink.send(Message::Text(ServerMsg::Error { msg: e }.to_json().into())).await;
+            let _ = sink
+                .send(Message::Text(ServerMsg::Error { msg: e }.to_json().into()))
+                .await;
             return;
         }
     };
@@ -118,11 +155,15 @@ async fn client(socket: WebSocket, state: AppState) {
             _ => continue,
         };
         match ClientMsg::parse(text.as_str()) {
-            Some(ClientMsg::Input { inputs }) => state.lobby.lock().unwrap().push_inputs(room_id, id, inputs),
+            Some(ClientMsg::Input { inputs }) => {
+                state.lobby.lock().unwrap().push_inputs(room_id, id, inputs)
+            }
             Some(ClientMsg::Ping { c }) => {
                 let _ = tx.send(ServerMsg::Pong { c }.to_json());
             }
-            Some(m @ (ClientMsg::SetTeam { .. } | ClientMsg::Configure { .. } | ClientMsg::Start)) => {
+            Some(
+                m @ (ClientMsg::SetTeam { .. } | ClientMsg::Configure { .. } | ClientMsg::Start),
+            ) => {
                 if let Err(e) = state.lobby.lock().unwrap().room_cmd(room_id, id, m) {
                     let _ = tx.send(ServerMsg::Error { msg: e }.to_json());
                 }
@@ -130,10 +171,21 @@ async fn client(socket: WebSocket, state: AppState) {
             Some(ClientMsg::Hello { .. }) | None => {
                 bad += 1;
                 if bad == 1 {
-                    let why = serde_json::from_str::<ClientMsg>(text.as_str()).err().map(|e| e.to_string()).unwrap_or_else(|| "repeated hello".into());
-                    tracing::warn!("room {room_id} player {id}: rejected message ({why}): {:.200}", text.as_str());
+                    let why = serde_json::from_str::<ClientMsg>(text.as_str())
+                        .err()
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| "repeated hello".into());
+                    tracing::warn!(
+                        "room {room_id} player {id}: rejected message ({why}): {:.200}",
+                        text.as_str()
+                    );
                 }
-                let _ = tx.send(ServerMsg::Error { msg: "unexpected message".into() }.to_json());
+                let _ = tx.send(
+                    ServerMsg::Error {
+                        msg: "unexpected message".into(),
+                    }
+                    .to_json(),
+                );
                 if bad > MAX_BAD_MESSAGES {
                     break;
                 }

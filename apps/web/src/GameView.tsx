@@ -59,7 +59,7 @@ export function GameView({ url, name, join, onLeave }: { url: string; name: stri
   }, [placed]);
   return (
     <>
-      <iframe ref={frame} className="game-frame" src={src} title="Saltline Arena" allow="fullscreen; autoplay; gamepad" />
+      <iframe ref={frame} className="game-frame" src={src} title="Hushline" allow="fullscreen; autoplay; gamepad" />
       {ready && inMatch && <Overlay onLeave={onLeave} />}
       {!inMatch && c.status !== "closed" && <Matchmaking join={join} progress={progress} onCancel={onLeave} />}
       {!inMatch && c.status === "closed" && <Overlay onLeave={onLeave} />}

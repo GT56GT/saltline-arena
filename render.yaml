@@ -16,7 +16,7 @@ services:
       - key: CHAIN_ID
         value: "84532"
       - key: ALLOWED_DOMAINS
-        value: saltline-arena.vercel.app
+        value: hushline-game.vercel.app,saltline-arena.vercel.app
       - key: SIGNER_KEY
         sync: false # set in the dashboard; never commit it
       - key: REGISTRY_ADDRESS

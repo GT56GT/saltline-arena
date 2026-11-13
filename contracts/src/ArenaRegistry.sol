@@ -5,7 +5,7 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 
-/// @title Saltline Arena match registry
+/// @title Hushline match registry
 /// @notice Stores the result of every match, as signed by the game server. Anyone may relay
 ///         signed results; only results carrying the server's EIP-712 signature are accepted.
 ///         Holds no funds. The other Arena contracts check vouchers through `verify`.
@@ -36,7 +36,7 @@ contract ArenaRegistry is EIP712, Ownable2Step {
     error LengthMismatch();
     error BadSignature(uint256 index);
 
-    constructor(address owner_, address signer_) EIP712("SaltlineArena", "1") Ownable(owner_) {
+    constructor(address owner_, address signer_) EIP712("Hushline", "1") Ownable(owner_) {
         if (signer_ == address(0)) revert ZeroAddress();
         signer = signer_;
         emit SignerChanged(address(0), signer_);

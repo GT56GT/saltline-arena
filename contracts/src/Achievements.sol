@@ -5,7 +5,7 @@ import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {Soulbound} from "./Soulbound.sol";
 import {ArenaRegistry} from "./ArenaRegistry.sol";
 
-/// @title Saltline Arena achievements
+/// @title Hushline achievements
 /// @notice Soulbound badges for in-game milestones. A player mints their own badge with a
 ///         voucher signed by the game server; badges can never be sold or transferred.
 contract Achievements is Soulbound {
@@ -21,7 +21,7 @@ contract Achievements is Soulbound {
     error AlreadyClaimed();
     error BadVoucher();
 
-    constructor(ArenaRegistry registry_) ERC721("Saltline Arena Achievements", "SLACH") {
+    constructor(ArenaRegistry registry_) ERC721("Hushline Achievements", "HLACH") {
         registry = registry_;
     }
 

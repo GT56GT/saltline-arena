@@ -1,4 +1,4 @@
-//! Saltline Arena match server.
+//! Hushline match server.
 //!
 //! - `room`  — one authoritative match (simulation, hit validation, lag compensation)
 //! - `bot`   — server-side bots that play through the same input path as humans

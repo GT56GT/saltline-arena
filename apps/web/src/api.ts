@@ -71,7 +71,7 @@ export async function signInWithWallet(): Promise<Account> {
     `${location.host} wants you to sign in with your Ethereum account:`,
     getAddress(address),
     "",
-    "Sign in to Saltline Arena. This costs nothing and sends no transaction.",
+    "Sign in to Hushline. This costs nothing and sends no transaction.",
     "",
     `URI: ${location.origin}`,
     "Version: 1",

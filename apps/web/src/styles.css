@@ -1,4 +1,4 @@
-/* Saltline look: port-authority signage meets a film title card. */
+/* Hushline look: port-authority signage meets a film title card. */
 :root {
   color-scheme: dark;
   --ink: #0b0d0f; --plate: rgba(11, 13, 15, .6); --plate-solid: rgba(11, 13, 15, .9);
@@ -173,6 +173,7 @@ kbd { display: inline-block; font: 500 10px/1 var(--f-mono); border: 1px solid r
 .lobby-body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 400px); gap: clamp(24px, 4vw, 64px); align-items: end; padding-top: clamp(16px, 4vh, 48px); }
 .hero { min-width: 0; }
 .word { font: 900 clamp(56px, min(10.5vw, 15.5vh), 168px)/.84 var(--f-display); letter-spacing: .1em; margin: 0; text-shadow: 0 2px 24px rgba(0, 0, 0, .35); }
+.word-accent { color: var(--signal); }
 .premise { max-width: 34em; font: 500 clamp(16px, 1.45vw, 21px)/1.35 var(--f-label); color: rgba(232, 228, 218, .9); margin: clamp(14px, 2.4vh, 24px) 0 0; padding-top: 14px; border-top: 1px solid var(--line); }
 .play { display: grid; gap: 12px; width: min(440px, 100%); margin-top: clamp(18px, 3.4vh, 32px); }
 .field { display: grid; gap: 8px; }

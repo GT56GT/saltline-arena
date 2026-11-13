@@ -1,4 +1,4 @@
-# Deploying Saltline Arena
+# Deploying Hushline
 
 Three independent pieces. Everything runs on free tiers.
 
@@ -8,7 +8,7 @@ Three independent pieces. Everything runs on free tiers.
 3. Set the secret env vars in the dashboard:
    - `SIGNER_KEY` — a fresh private key used only to sign results (`cast wallet new`). Its address goes into the contracts.
    - Leave `RPC_URL`/`RELAYER_KEY`/`REGISTRY_ADDRESS` empty until step 3.
-4. Health check: `https://<service>.onrender.com/health` → `saltline arena ok`.
+4. Health check: `https://<service>.onrender.com/health` → `hushline ok`.
 
 Free-tier limits: sleeps after ~15 min idle; no persistent disk (stats reset on redeploy).
 For lasting stats, run the same Docker image on a free VM (e.g. Oracle Cloud Always Free) with a volume at `/data`.

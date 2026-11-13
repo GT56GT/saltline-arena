@@ -1,4 +1,4 @@
-"""Turn raw Firefly takes into game-ready one-shots for Saltline Arena.
+"""Turn raw Firefly takes into game-ready one-shots for Hushline.
 
 For each sound: mono, a 35 Hz high-pass (removes the sub-bass swell and DC drift some takes have),
 cut to the useful part, short fades so nothing clicks, then levelled so every version of a sound is

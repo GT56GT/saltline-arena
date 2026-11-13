@@ -1,6 +1,6 @@
 [package]
 name = "protocol"
-description = "Saltline Arena wire messages between browser and match server."
+description = "Hushline wire messages between browser and match server."
 edition.workspace = true
 version.workspace = true
 license.workspace = true

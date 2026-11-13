@@ -83,7 +83,7 @@ async fn main() {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await.expect("bind");
     tracing::info!(
-        "saltline arena server on ws://{addr}/ws (signer {:#x})",
+        "hushline server on ws://{addr}/ws (signer {:#x})",
         state.signer.address()
     );
     server::serve(listener, state).await;

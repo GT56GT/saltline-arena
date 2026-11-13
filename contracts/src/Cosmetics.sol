@@ -6,7 +6,7 @@ import {ERC2981} from "@openzeppelin/contracts/token/common/ERC2981.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ArenaRegistry} from "./ArenaRegistry.sol";
 
-/// @title Saltline Arena cosmetics
+/// @title Hushline cosmetics
 /// @notice Visual-only items (visors, plates). Free to claim with a server-signed voucher, one per
 ///         wallet per item, tradable afterwards. No item affects gameplay.
 contract Cosmetics is ERC1155, ERC2981, Ownable {

@@ -14,7 +14,7 @@ contract Deploy is Script {
     function run() external {
         address signer = vm.envAddress("SIGNER_ADDRESS");
         address owner = vm.envOr("OWNER", msg.sender);
-        string memory uri = vm.envOr("COSMETICS_URI", string("https://saltline-arena.vercel.app/cosmetics/{id}.json"));
+        string memory uri = vm.envOr("COSMETICS_URI", string("https://hushline-game.vercel.app/cosmetics/{id}.json"));
         vm.startBroadcast();
         ArenaRegistry registry = new ArenaRegistry(owner, signer);
         Achievements achievements = new Achievements(registry);

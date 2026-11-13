@@ -1,4 +1,6 @@
-# Saltline Arena
+# Hushline
+
+A free tactical shooter in the browser: squads and free-for-all in the Saltline container terminal, where footsteps give you away. Play at https://hushline-game.vercel.app (formerly Saltline Arena; the harbour map and the original renderer keep the Saltline name).
 
 Free-to-play, wallet-native PvP shooter. The server referees every match; the chain stores only signed results.
 

@@ -5,7 +5,7 @@ import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Soulbound} from "./Soulbound.sol";
 
-/// @title Saltline Arena season ranks
+/// @title Hushline season ranks
 /// @notice One soulbound rank badge per wallet per season, minted at season close from the
 ///         final standings (after the anti-cheat review).
 contract SeasonRanks is Soulbound, Ownable {
@@ -24,7 +24,7 @@ contract SeasonRanks is Soulbound, Ownable {
     error AlreadyRanked(address player);
     error BadTier();
 
-    constructor(address owner_) ERC721("Saltline Arena Season Ranks", "SLRANK") Ownable(owner_) {}
+    constructor(address owner_) ERC721("Hushline Season Ranks", "HLRANK") Ownable(owner_) {}
 
     function mintSeason(uint16 season, address[] calldata players, uint8[] calldata tiers) external onlyOwner {
         if (players.length != tiers.length) revert LengthMismatch();

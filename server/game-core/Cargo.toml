@@ -1,6 +1,6 @@
 [package]
 name = "game-core"
-description = "Saltline Arena shared rules: movement, collision, weapons. Runs on the server and (as WASM) in the browser."
+description = "Hushline shared rules: movement, collision, weapons. Runs on the server and (as WASM) in the browser."
 edition.workspace = true
 version.workspace = true
 license.workspace = true

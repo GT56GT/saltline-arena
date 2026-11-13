@@ -1,6 +1,6 @@
 [package]
 name = "server"
-description = "Saltline Arena authoritative match server."
+description = "Hushline authoritative match server."
 edition.workspace = true
 version.workspace = true
 license.workspace = true

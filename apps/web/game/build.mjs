@@ -1,4 +1,4 @@
-// Builds the original Saltline renderer for Arena.
+// Builds the original Saltline renderer for Hushline (the match view).
 //
 // Input:  game/saltline.min.js (the original game, unmodified) + game/shell.html (its page shell).
 // Output: public/saltline/game.js + public/saltline/play.html.
@@ -98,7 +98,7 @@ for (const [what, from, to] of PATCHES) {
 const arenaCss = `<style>
 .h-relays { display: none !important; }
 .hud .h-obj .h-k { letter-spacing: .18em; }
-#boot .boot-mark::after { content: " ARENA"; color: #ffb347; }
+#boot .boot-mark::after { content: "LINE"; color: #ffb347; }
 /* Noise indicator: how far your own movement can be heard. Sits where health fades in, and moves up while it shows. */
 .h-noise { position: absolute; left: var(--gl); bottom: calc(22px + var(--sab)); display: flex; align-items: center; gap: 4px; font: 600 11px/1 var(--f-label); letter-spacing: .22em; text-transform: uppercase; color: var(--bone-dim); transition: transform .25s, opacity .25s; }
 .h-noise b { font-weight: 600; min-width: 5.6em; margin-right: 4px; color: var(--bone); }
@@ -113,7 +113,9 @@ const arenaCss = `<style>
 </style>`;
 
 let shell = readFileSync(join(here, "shell.html"), "utf8");
-shell = shell.replace(/<title>[^<]*<\/title>/, "<title>Saltline Arena</title>");
+shell = shell.replace(/<title>[^<]*<\/title>/, "<title>Hushline</title>");
+// Loading screen wordmark: HUSH + LINE (amber, via CSS below).
+shell = shell.replace('<div class="boot-mark">SALTLINE</div>', '<div class="boot-mark">HUSH</div>');
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, "game.js"), src);
 writeFileSync(join(out, "play.html"), `<!doctype html>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n${shell}\n${arenaCss}\n<script src="game.js"></script>\n<script src="loader.js"></script>\n`);

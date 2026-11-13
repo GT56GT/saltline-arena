@@ -112,8 +112,8 @@ function Lobby({ onDeploy }: { onDeploy: (url: string, name: string, join: JoinR
 
       <div className="lobby-body">
         <section className="hero">
-          <h1 className="word">SALTLINE<br />ARENA</h1>
-          <p className="premise">Squad fights and free-for-all in the Saltline container terminal. Up to eight players, every shot judged by the server.</p>
+          <h1 className="word">HUSH<br /><span className="word-accent">LINE</span></h1>
+          <p className="premise">Squad fights and free-for-all in the Saltline container terminal, where every footstep can give you away. Up to eight players, every shot judged by the server.</p>
 
           <div className="play">
             {!me && (
@@ -318,7 +318,7 @@ function HowTo() {
       <h3>Fair play</h3>
       <p className="hint">Your browser only sends what you press. The server moves everyone, decides every hit, and signs each result; signed results are written to the ArenaRegistry contract so anyone can audit them.</p>
       <h3>No money, ever</h3>
-      <p className="hint">Saltline Arena is free. Nothing costs money to play, nothing pays out money, and earned badges cannot be sold.</p>
+      <p className="hint">Hushline is free. Nothing costs money to play, nothing pays out money, and earned badges cannot be sold.</p>
     </div>
   );
 }

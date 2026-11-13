@@ -25,9 +25,27 @@ pub struct ArenaSigner {
 impl ArenaSigner {
     /// `key_hex` empty = a throwaway key (development only; nothing it signs is accepted on-chain).
     pub fn new(key_hex: &str, chain_id: u64, registry: Address) -> Self {
-        let key = if key_hex.trim().is_empty() { PrivateKeySigner::random() } else { key_hex.trim().parse().expect("SIGNER_KEY must be a hex private key") };
-        let domain = Eip712Domain::new(Some("SaltlineArena".into()), Some("1".into()), Some(U256::from(chain_id)), Some(registry), None);
-        Self { key, domain, chain_id, registry }
+        let key = if key_hex.trim().is_empty() {
+            PrivateKeySigner::random()
+        } else {
+            key_hex
+                .trim()
+                .parse()
+                .expect("SIGNER_KEY must be a hex private key")
+        };
+        let domain = Eip712Domain::new(
+            Some("Hushline".into()),
+            Some("1".into()),
+            Some(U256::from(chain_id)),
+            Some(registry),
+            None,
+        );
+        Self {
+            key,
+            domain,
+            chain_id,
+            registry,
+        }
     }
 
     pub fn address(&self) -> Address {
@@ -36,7 +54,10 @@ impl ArenaSigner {
 
     fn sign<T: SolStruct>(&self, msg: &T) -> String {
         let hash = msg.eip712_signing_hash(&self.domain);
-        let sig = self.key.sign_hash_sync(&hash).expect("signing never fails for a local key");
+        let sig = self
+            .key
+            .sign_hash_sync(&hash)
+            .expect("signing never fails for a local key");
         format!("0x{}", hex::encode(sig.as_bytes()))
     }
 
@@ -46,21 +67,42 @@ impl ArenaSigner {
     }
 
     pub fn sign_match(&self, match_id: B256, ended_at: u64, results_hash: B256) -> String {
-        self.sign(&MatchResult { matchId: match_id, endedAt: ended_at, resultsHash: results_hash })
+        self.sign(&MatchResult {
+            matchId: match_id,
+            endedAt: ended_at,
+            resultsHash: results_hash,
+        })
     }
 
     pub fn sign_cosmetic(&self, to: Address, item_id: u64) -> String {
-        self.sign(&CosmeticClaim { to, itemId: U256::from(item_id) })
+        self.sign(&CosmeticClaim {
+            to,
+            itemId: U256::from(item_id),
+        })
     }
 
     pub fn sign_achievement(&self, to: Address, achievement_id: u64) -> String {
-        self.sign(&AchievementAward { to, achievementId: U256::from(achievement_id) })
+        self.sign(&AchievementAward {
+            to,
+            achievementId: U256::from(achievement_id),
+        })
     }
 
     /// Recover who signed a match result (used by tests and by anyone auditing results).
-    pub fn recover_match(&self, match_id: B256, ended_at: u64, results_hash: B256, sig_hex: &str) -> Option<Address> {
+    pub fn recover_match(
+        &self,
+        match_id: B256,
+        ended_at: u64,
+        results_hash: B256,
+        sig_hex: &str,
+    ) -> Option<Address> {
         let sig: alloy_primitives::Signature = sig_hex.parse().ok()?;
-        let hash = MatchResult { matchId: match_id, endedAt: ended_at, resultsHash: results_hash }.eip712_signing_hash(&self.domain);
+        let hash = MatchResult {
+            matchId: match_id,
+            endedAt: ended_at,
+            resultsHash: results_hash,
+        }
+        .eip712_signing_hash(&self.domain);
         sig.recover_address_from_prehash(&hash).ok()
     }
 }
