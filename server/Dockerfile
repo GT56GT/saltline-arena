@@ -1,5 +1,6 @@
 # Saltline Arena match server — small runtime image with one static-ish binary.
-FROM rust:1-slim AS build
+# Build on the same Debian release as the runtime image, so the binary links the glibc it will run with.
+FROM rust:1-slim-bookworm AS build
 WORKDIR /src
 COPY . .
 RUN cargo build --release --bin arena-server
