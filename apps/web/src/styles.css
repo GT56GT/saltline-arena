@@ -131,3 +131,13 @@ kbd { display: inline-block; font: 500 10px/1 var(--f-mono); border: 1px solid r
 .result b { font: 900 54px/1 var(--f-display); }
 .result span:last-child { font: 500 13px/1 var(--f-mono); }
 @media (max-width: 900px) { .lobby { flex-direction: column; overflow: auto; } .panel { width: 100%; max-height: none; } }
+
+/* ---- match: the original renderer in a frame, Arena overlay on top ---- */
+.game-frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: #07090b; }
+.hud .joining { position: absolute; left: 50%; bottom: 18%; transform: translateX(-50%); font: 500 13px/1 var(--f-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--bone-dim); }
+.hud .leave { position: absolute; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; align-items: center; gap: 14px; pointer-events: auto; text-shadow: none; }
+.hud .leave span { font: 500 11px/1 var(--f-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--steel); }
+.hud .gone { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: rgba(7, 9, 11, .82); pointer-events: auto; text-shadow: none; }
+.hud .gone b { font: 900 clamp(36px, 7vw, 72px)/.9 var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--alarm); }
+.hud .gone span { font: 500 13px/1.4 var(--f-mono); color: var(--bone-dim); max-width: 520px; text-align: center; }
+.hud .dead { background: radial-gradient(ellipse, rgba(40, 6, 2, 0), rgba(40, 6, 2, .45)); }

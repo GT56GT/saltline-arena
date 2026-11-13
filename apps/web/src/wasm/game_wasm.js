@@ -21,9 +21,17 @@ export class Predictor {
      * @param {boolean} jump
      * @param {boolean} sprint
      * @param {boolean} crouch
+     * @param {boolean} fire
      */
-    apply(seq, mx, mz, yaw, pitch, jump, sprint, crouch) {
-        wasm.predictor_apply(this.__wbg_ptr, seq, mx, mz, yaw, pitch, jump, sprint, crouch);
+    apply(seq, mx, mz, yaw, pitch, jump, sprint, crouch, fire) {
+        wasm.predictor_apply(this.__wbg_ptr, seq, mx, mz, yaw, pitch, jump, sprint, crouch, fire);
+    }
+    /**
+     * @returns {boolean}
+     */
+    crouching() {
+        const ret = wasm.predictor_crouching(this.__wbg_ptr);
+        return ret !== 0;
     }
     /**
      * @returns {number}
@@ -53,6 +61,13 @@ export class Predictor {
         this.__wbg_ptr = ret[0];
         PredictorFinalization.register(this, this.__wbg_ptr, this);
         return this;
+    }
+    /**
+     * @returns {boolean}
+     */
+    on_ground() {
+        const ret = wasm.predictor_on_ground(this.__wbg_ptr);
+        return ret !== 0;
     }
     /**
      * @returns {number}
@@ -96,6 +111,27 @@ export class Predictor {
      */
     speed() {
         const ret = wasm.predictor_speed(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    vx() {
+        const ret = wasm.predictor_vx(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    vy() {
+        const ret = wasm.predictor_vy(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    vz() {
+        const ret = wasm.predictor_vz(this.__wbg_ptr);
         return ret;
     }
     /**

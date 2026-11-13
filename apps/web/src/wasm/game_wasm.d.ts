@@ -7,13 +7,15 @@ export class Predictor {
     /**
      * Predict one tick of local movement and remember the input for replay.
      */
-    apply(seq: number, mx: number, mz: number, yaw: number, pitch: number, jump: boolean, sprint: boolean, crouch: boolean): void;
+    apply(seq: number, mx: number, mz: number, yaw: number, pitch: number, jump: boolean, sprint: boolean, crouch: boolean, fire: boolean): void;
+    crouching(): boolean;
     eye_y(): number;
     last_error(): number;
     /**
      * `map_json` is the `map` field of the server's Welcome message.
      */
     constructor(map_json: string);
+    on_ground(): boolean;
     pending(): number;
     /**
      * Distance to the first wall along a ray (for drawing the local tracer instantly).
@@ -24,6 +26,9 @@ export class Predictor {
      */
     reconcile(ack: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, crouch: boolean, alive: boolean): void;
     speed(): number;
+    vx(): number;
+    vy(): number;
+    vz(): number;
     x(): number;
     y(): number;
     z(): number;
@@ -34,14 +39,19 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_predictor_free: (a: number, b: number) => void;
-    readonly predictor_apply: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly predictor_apply: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+    readonly predictor_crouching: (a: number) => number;
     readonly predictor_eye_y: (a: number) => number;
     readonly predictor_last_error: (a: number) => number;
     readonly predictor_new: (a: number, b: number) => [number, number, number];
+    readonly predictor_on_ground: (a: number) => number;
     readonly predictor_pending: (a: number) => number;
     readonly predictor_raycast: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => number;
     readonly predictor_reconcile: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly predictor_speed: (a: number) => number;
+    readonly predictor_vx: (a: number) => number;
+    readonly predictor_vy: (a: number) => number;
+    readonly predictor_vz: (a: number) => number;
     readonly predictor_x: (a: number) => number;
     readonly predictor_y: (a: number) => number;
     readonly predictor_z: (a: number) => number;

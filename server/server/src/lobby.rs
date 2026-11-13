@@ -24,6 +24,7 @@ pub struct Lobby {
     pub finished: Vec<MatchSummary>,
     pub kill_target: u32,
     pub match_ticks: u32,
+    pub spawn_near: bool,
 }
 
 impl Lobby {
@@ -37,6 +38,7 @@ impl Lobby {
             finished: Vec::new(),
             kill_target: crate::room::KILL_TARGET,
             match_ticks: crate::room::MATCH_TICKS,
+            spawn_near: false,
         }
     }
 
@@ -54,6 +56,7 @@ impl Lobby {
                 let mut room = Room::new(id, (self.map)());
                 room.kill_target = self.kill_target;
                 room.match_ticks = self.match_ticks;
+                room.spawn_near = self.spawn_near;
                 self.rooms.insert(id, room);
                 id
             });

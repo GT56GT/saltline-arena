@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useReducer, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
 import { client } from "./client";
-import { Scene } from "./Scene";
+import { GameView } from "./GameView";
 import { api, hasWallet, httpBase, mintOnChain, serverUrl, session, shortAddr, signInWithWallet, type BoardRow, type ChainInfo, type Item, type Me } from "./api";
 
 function useClient() {
@@ -18,14 +18,11 @@ function useClient() {
 }
 
 export function App() {
-  const status = useSyncExternalStore((fn) => client.subscribe(fn), () => client.status);
-  return status === "playing" ? (
-    <>
-      <Scene />
-      <Hud />
-    </>
+  const [play, setPlay] = useState<{ url: string; name: string } | null>(null);
+  return play ? (
+    <GameView url={play.url} name={play.name} onLeave={() => setPlay(null)} />
   ) : (
-    <Lobby />
+    <Lobby onDeploy={(url, name) => setPlay({ url, name })} />
   );
 }
 
@@ -33,7 +30,7 @@ export function App() {
 
 type Tab = "profile" | "leaderboard" | "cosmetics" | "how";
 
-function Lobby() {
+function Lobby({ onDeploy }: { onDeploy: (url: string, name: string) => void }) {
   const c = useClient();
   const [me, setMe] = useState<Me | null>(null);
   const [tab, setTab] = useState<Tab>("leaderboard");
@@ -78,7 +75,7 @@ function Lobby() {
       localStorage.setItem("arena.name", guestName);
       localStorage.setItem("arena.server", server);
     } catch { /* private mode */ }
-    void c.connect(server, name);
+    onDeploy(server, name);
   };
 
   return (
@@ -101,9 +98,7 @@ function Lobby() {
               <input id="name" maxLength={16} placeholder="Play as a guest" value={guestName} onChange={(e) => setGuestName(e.target.value)} />
             </>
           )}
-          <button className="btn primary" onClick={deploy} disabled={c.status === "connecting"}>
-            {c.status === "connecting" ? "Connecting…" : "Deploy"}
-          </button>
+          <button className="btn primary" onClick={deploy}>Deploy</button>
           {!me && (
             <button className="btn ghost" onClick={signIn} disabled={!!busy}>
               {busy ? "Waiting for wallet…" : hasWallet() ? "Sign in with wallet" : "Sign in with wallet (none found)"}
@@ -291,79 +286,6 @@ function HowTo() {
       <p className="hint">Your browser only sends what you press. The server moves everyone, decides every hit, and signs each result; signed results are written to the ArenaRegistry contract so anyone can audit them.</p>
       <h3>No money, ever</h3>
       <p className="hint">Saltline Arena is free. Nothing costs money to play, nothing pays out money, and earned badges cannot be sold.</p>
-    </div>
-  );
-}
-
-// =============================================================== in-game HUD
-
-function Hud() {
-  const c = useClient();
-  const now = performance.now();
-  const showScores = c.keys.has("Tab");
-  const hm = now - c.hitMarker.t < 220 ? c.hitMarker : null;
-  const hurt = now - c.hurt.t < 400;
-  const banner = now - c.banner.t < 5000 ? c.banner.text : "";
-  const result = c.result && now - c.result.t < 9000 ? c.result : null;
-  const me = c.me;
-  return (
-    <div className="hud">
-      {hurt && <div className="hurt" />}
-      <div className={`cross ${me.alive ? "" : "off"}`}><i /><i /><i /><i /></div>
-      {hm && <div className={`hitmark ${hm.kill ? "kill" : hm.head ? "head" : ""}`}><i /><i /><i /><i /></div>}
-
-      <div className="score-top">
-        <b>{me.kills}</b><span>/ {c.killTarget}</span>
-        <em>{c.rtt ? `${c.rtt} ms` : ""}</em>
-      </div>
-
-      <div className="feed">
-        {c.feed.filter((f) => now - f.t < 6000).map((f) => (
-          <div key={f.id} className={f.mine ? "mine" : ""}>{f.text}</div>
-        ))}
-      </div>
-
-      <div className={`health ${me.hp < 30 ? "crit" : ""}`}>
-        <span className="k">Health</span>
-        <b>{Math.ceil(me.hp)}</b>
-        <div className="bar"><i style={{ width: `${me.hp}%` }} /></div>
-      </div>
-
-      <div className={`ammo ${me.ammo <= 6 ? "low" : ""}`}>
-        <span className="k">{me.reloading ? "Reloading" : "FAC-9 Longbore"}</span>
-        <b>{me.reloading ? "··" : me.ammo}</b><span className="r">/ 30</span>
-      </div>
-
-      {!me.alive && (
-        <div className="dead">
-          <b>Down</b>
-          <span>Redeploying in 3 seconds</span>
-        </div>
-      )}
-      {banner && <div className="banner">{banner}</div>}
-      {result && (
-        <div className="result">
-          <span className="k">Match recorded · signed by the server</span>
-          <b className={result.me.stats.rating >= result.before ? "up" : "down"}>
-            {result.me.stats.rating >= result.before ? "+" : ""}{Math.round(result.me.stats.rating - result.before)}
-          </b>
-          <span>Rating {Math.round(result.me.stats.rating)}</span>
-        </div>
-      )}
-      {!c.locked && me.alive && <div className="clickto">Click to aim · Esc to release the mouse</div>}
-      {showScores && (
-        <div className="scores">
-          <p className="k">Scoreboard · first to {c.killTarget}</p>
-          <table>
-            <thead><tr><th>Breacher</th><th>K</th><th>D</th></tr></thead>
-            <tbody>
-              {c.scoreboard().map((r) => (
-                <tr key={r.id} className={r.me ? "me" : ""}><td>{r.name}{r.bot ? <em className="bot">bot</em> : null}</td><td>{r.kills}</td><td>{r.deaths}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   );
 }

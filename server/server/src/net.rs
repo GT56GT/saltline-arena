@@ -59,8 +59,9 @@ pub fn clean_name(raw: &str) -> String {
 async fn client(socket: WebSocket, state: AppState) {
     let (mut sink, mut stream) = socket.split();
 
-    // The first message must be a Hello, within 5 seconds.
-    let hello = tokio::time::timeout(Duration::from_secs(5), stream.next()).await;
+    // The first message must be a Hello, within 15 seconds (generous: a slow phone may still be
+    // busy compiling the renderer's shaders when the socket opens).
+    let hello = tokio::time::timeout(Duration::from_secs(15), stream.next()).await;
     let (mut name, token) = match hello {
         Ok(Some(Ok(Message::Text(t)))) => match ClientMsg::parse(t.as_str()) {
             Some(ClientMsg::Hello { name, token }) => (clean_name(&name), token),

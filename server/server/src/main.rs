@@ -22,6 +22,8 @@ async fn main() {
     let map: fn() -> game_core::Map = if env("MAP", "harbour") == "yard" { game_core::Map::yard } else { game_core::Map::harbour };
     let mut lobby = server::Lobby::new(map, min_players);
     lobby.kill_target = env("KILL_TARGET", "30").parse().expect("KILL_TARGET");
+    // SPAWN_RULE=nearest: spawn close to other players (practice servers, browser tests).
+    lobby.spawn_near = env("SPAWN_RULE", "farthest") == "nearest";
     lobby.match_ticks = env("MATCH_SECONDS", "480").parse::<u32>().expect("MATCH_SECONDS") * game_core::TICK_HZ;
     let lobby = Arc::new(Mutex::new(lobby));
     let state = server::AppState { lobby, db, signer, allowed_domains, contracts };

@@ -30,7 +30,8 @@ Project root `apps/web`, env `VITE_SERVER_URL=wss://<service>.onrender.com/ws`. 
 
 ## Local development
 ```sh
-cd server && cargo run --release --bin arena-server          # ws://localhost:8790/ws  (MAP=yard for the small test map)
+cd server && cargo run --release --bin arena-server          # ws://localhost:8790/ws  (MAP=yard for the small test map,
+                                                              #  SPAWN_RULE=nearest for practice/tests)
 cd apps/web && npm install && npm run dev                      # http://localhost:5173
 ./scripts/test-chain.sh                                        # Anvil + contracts + settlement test
 ```

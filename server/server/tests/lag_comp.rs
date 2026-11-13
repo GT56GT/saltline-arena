@@ -42,13 +42,13 @@ fn shot_at_where_target_was_seen_hits() {
     let (mut room, a, b, mut rx) = room_with_two();
     room.step();
     let seen = room.tick; // A sees B at x = 0 on this tick
-    strafe(&mut room, b, 4, 1); // B moves ~0.6 m right (133 ms of lag)
+    strafe(&mut room, b, 6, 1); // B moves ~0.6 m right (200 ms of lag)
     assert!(room.state_of(b).unwrap().pos.x > 0.4);
     let _ = hits(&mut rx);
-    let pitch = ((1.0_f32 - 1.6) / 10.0).atan();
+    let pitch = ((1.0_f32 - game_core::EYE_HEIGHT) / 10.0).atan();
     room.push_inputs(a, vec![Input { seq: 1, yaw: 0.0, pitch, fire: true, view_tick: seen, ..Default::default() }]);
     room.step();
-    assert_eq!(hits(&mut rx), 1, "aimed where B was 4 ticks ago: rewound hit counts");
+    assert_eq!(hits(&mut rx), 1, "aimed where B was 6 ticks ago: rewound hit counts");
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn rewind_is_capped_at_200ms() {
     let seen = room.tick;
     strafe(&mut room, b, MAX_REWIND_TICKS + 10, 1); // far longer than the window, B moves ~2 m
     let _ = hits(&mut rx);
-    let pitch = ((1.0_f32 - 1.6) / 10.0).atan();
+    let pitch = ((1.0_f32 - game_core::EYE_HEIGHT) / 10.0).atan();
     room.push_inputs(a, vec![Input { seq: 1, yaw: 0.0, pitch, fire: true, view_tick: seen, ..Default::default() }]);
     room.step();
     assert_eq!(hits(&mut rx), 0, "claiming a very old view tick cannot reach back past the window");

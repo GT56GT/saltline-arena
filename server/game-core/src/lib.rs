@@ -17,20 +17,26 @@ pub use weapon::{Weapon, RIFLE};
 pub const TICK_HZ: u32 = 30;
 pub const DT: f32 = 1.0 / TICK_HZ as f32;
 
-pub const PLAYER_RADIUS: f32 = 0.35;
+// Movement tuning matches the original Saltline player controller, so the client's
+// first-person camera (which predicts with this exact code) feels like the original game.
+pub const PLAYER_RADIUS: f32 = 0.32;
 pub const PLAYER_HEIGHT: f32 = 1.8;
-pub const CROUCH_HEIGHT: f32 = 1.2;
-pub const EYE_HEIGHT: f32 = 1.6;
+pub const CROUCH_HEIGHT: f32 = 1.15;
+pub const EYE_HEIGHT: f32 = 1.68;
 pub const CROUCH_EYE: f32 = 1.05;
 pub const HEAD_RADIUS: f32 = 0.14;
 
-pub const WALK_SPEED: f32 = 5.0;
-pub const SPRINT_SPEED: f32 = 7.5;
-pub const CROUCH_SPEED: f32 = 2.6;
-pub const GROUND_ACCEL: f32 = 60.0;
-pub const AIR_ACCEL: f32 = 12.0;
-pub const GRAVITY: f32 = 22.0;
-pub const JUMP_SPEED: f32 = 7.2;
+pub const WALK_SPEED: f32 = 3.8;
+pub const SPRINT_SPEED: f32 = 6.4;
+pub const CROUCH_SPEED: f32 = 1.9;
+pub const GROUND_ACCEL: f32 = 34.0;
+pub const GROUND_DECEL: f32 = 26.0;
+pub const AIR_ACCEL: f32 = 9.0;
+/// With no movement input in the air, momentum is almost kept.
+pub const AIR_DRAG: f32 = 0.6;
+pub const GRAVITY: f32 = 21.0;
+/// Jump apex of 1 m: sqrt(2 * GRAVITY * 1.0).
+pub const JUMP_SPEED: f32 = 6.480_741;
 pub const MAX_PITCH: f32 = 1.5;
 pub const MAX_HEALTH: f32 = 100.0;
 /// Kerbs, steps and low ledges up to this height are climbed automatically.
@@ -147,15 +153,27 @@ pub fn step_player(s: &mut PlayerState, input: &Input, map: &Map) {
     let fwd = Vec3::new(-s.yaw.sin(), 0.0, -s.yaw.cos());
     let right = Vec3::new(-fwd.z, 0.0, fwd.x);
     let wish = fwd * inp.mz + right * inp.mx;
-    let max_speed = if s.crouching {
+    let moving = inp.mx * inp.mx + inp.mz * inp.mz > 0.01;
+    // Sprint only when running mostly forward and not shooting (as in the original game).
+    let sprinting = inp.sprint && inp.mz > 0.55 && inp.mx.abs() < 0.6 && !s.crouching && !inp.fire;
+    let mut max_speed = if s.crouching {
         CROUCH_SPEED
-    } else if inp.sprint && inp.mz > 0.5 {
+    } else if sprinting {
         SPRINT_SPEED
     } else {
         WALK_SPEED
     };
+    if inp.mz < 0.0 {
+        // Backpedalling is a little slower.
+        max_speed *= 1.0 + (0.82 - 1.0) * (-inp.mz);
+    }
     let target = wish * max_speed;
-    let accel = if s.on_ground { GROUND_ACCEL } else { AIR_ACCEL };
+    let accel = match (s.on_ground, moving) {
+        (true, true) => GROUND_ACCEL,
+        (true, false) => GROUND_DECEL,
+        (false, true) => AIR_ACCEL,
+        (false, false) => AIR_DRAG,
+    };
     let mut horiz = Vec3::new(s.vel.x, 0.0, s.vel.z);
     let delta = target - horiz;
     let step = accel * DT;
@@ -233,14 +251,16 @@ pub fn step_player(s: &mut PlayerState, input: &Input, map: &Map) {
     s.pos = p;
 
     // Weapon timers.
-    s.fire_cd = (s.fire_cd - DT).max(0.0);
+    // Fire cooldown may run one tick negative so a 720 rpm rifle averages 12 shots a second
+    // on a 30 Hz server (shots land 3, 2, 3, 2... ticks apart) instead of rounding down to 10.
+    s.fire_cd = (s.fire_cd - DT).max(-DT);
     if s.reload_t > 0.0 {
         s.reload_t = (s.reload_t - DT).max(0.0);
         if s.reload_t == 0.0 {
             s.ammo = RIFLE.mag;
         }
     } else if inp.reload && s.ammo < RIFLE.mag {
-        s.reload_t = RIFLE.reload_secs;
+        s.reload_t = RIFLE.reload_time(s.ammo);
     }
 }
 
@@ -309,7 +329,8 @@ mod tests {
             step_player(&mut s, &inp, &map);
         }
         // Facing -Z; after 2 s near walk speed (small accel ramp).
-        assert!(s.pos.z < -9.0 && s.pos.z > -10.1, "z = {}", s.pos.z);
+        let full = WALK_SPEED * 2.0;
+        assert!(s.pos.z < -(full - 0.4) && s.pos.z > -(full + 0.05), "z = {}", s.pos.z);
         assert!(s.pos.x.abs() < 1e-3);
     }
 

@@ -1,0 +1,92 @@
+<!doctype html><html><body>
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js","three/addons/":"./node_modules/three/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from "three";
+import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
+import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
+const JUNK = /smoke|cigarette|97db0f68|BulletCapsule/i;
+window.convert = async () => {
+  const src = await new FBXLoader().loadAsync("in/pmc.fbx");
+  const drop = [];
+  src.traverse((o) => {
+    if (o.isLight || o.isCamera) drop.push(o);
+    if (o.isMesh && (JUNK.test(o.name) || JUNK.test([].concat(o.material).map((m) => m.name).join()))) drop.push(o);
+  });
+  drop.forEach((o) => o.parent && o.parent.remove(o));
+  const log = [];
+  let tris = 0;
+  src.traverse((o) => {
+    if (!o.isMesh) return;
+    const mats = [].concat(o.material).map((m) => {
+      const n = (m.name || "default").replace(/\s+/g, "_").toLowerCase();
+      const k = new THREE.MeshStandardMaterial({ name: n, color: 0x999999, roughness: 0.8 });
+      return k;
+    });
+    o.material = Array.isArray(o.material) ? mats : mats[0];
+    let g = o.geometry;
+    for (const a of Object.keys(g.attributes)) if (!["position", "normal", "uv", "skinIndex", "skinWeight"].includes(a)) g.deleteAttribute(a);
+    const before = g.attributes.position.count;
+    g = mergeVertices(g, 1e-4);
+    g.computeBoundingBox(); g.computeBoundingSphere();
+    o.geometry = g;
+    tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    o.castShadow = o.receiveShadow = true;
+    log.push(`${o.name} ${o.isSkinnedMesh ? "skin" : "rigid"} ${before}->${g.attributes.position.count} [${mats.map((m) => m.name)}] parent=${o.parent && o.parent.name}`);
+  });
+  // Rigid gear must ride the skeleton: the rifle (and the magazine seated in it) on the right
+  // hand, pouches and spare magazines on the nearest spine bone.
+  src.updateMatrixWorld(true);
+  const gun = src.getObjectByName("Gun_Low");
+  const gunBox = new THREE.Box3().setFromObject(gun);
+  const hand = src.getObjectByName("mixamorigRightHand");
+  const spines = ["mixamorigHips", "mixamorigSpine", "mixamorigSpine1", "mixamorigSpine2"].map((n) => src.getObjectByName(n));
+  // Spare magazines belong in the pouches; drop any that float loose in front of the body.
+  const pouchC = [];
+  src.traverse((o) => { if (o.isMesh && /^pouch/.test(o.name)) pouchC.push(new THREE.Box3().setFromObject(o).getCenter(new THREE.Vector3())); });
+  const loose = [];
+  src.traverse((o) => { if (o.isMesh && /^MagTech/.test(o.name)) { const c = new THREE.Box3().setFromObject(o).getCenter(new THREE.Vector3()); const d = Math.min(...pouchC.map((p) => p.distanceTo(c))); log.push(`mag ${o.name} to pouch ${d.toFixed(1)} cm`); if (d > 9) loose.push(o); } });
+  loose.forEach((o) => o.parent.remove(o));
+  const rigid = [];
+  src.traverse((o) => { if (o.isMesh && !o.isSkinnedMesh && o.parent === src) rigid.push(o); });
+  for (const o of rigid) {
+    const c = new THREE.Box3().setFromObject(o).getCenter(new THREE.Vector3());
+    // Distance from this part's centre to the rifle's surface (closest rifle vertex).
+    let near = 1e9;
+    if (o !== gun) {
+      const pa = gun.geometry.attributes.position, v = new THREE.Vector3();
+      for (let i = 0; i < pa.count; i += 3) { v.fromBufferAttribute(pa, i).applyMatrix4(gun.matrixWorld); near = Math.min(near, v.distanceTo(c)); }
+    }
+    let bone = hand;
+    if (o !== gun && near > 6) {
+      let bd = 1e9;
+      for (const b of spines) { const d = b.getWorldPosition(new THREE.Vector3()).distanceTo(c); if (d < bd) { bd = d; bone = b; } }
+    }
+    bone.attach(o);
+    log.push(`pin ${o.name} -> ${bone.name} (rifle ${near.toFixed(1)} cm)`);
+  }
+  // Feet on the floor, centred on the hips, metres, facing -Z (game convention).
+  src.updateMatrixWorld(true);
+  const body = new THREE.Box3();
+  src.traverse((o) => { if (o.isMesh && !/gun|mag|bullet/i.test(o.name)) body.expandByObject(o); });
+  const size = body.getSize(new THREE.Vector3());
+  const hips = src.getObjectByName("mixamorigHips");
+  const hp = hips.getWorldPosition(new THREE.Vector3());
+  const s = 1.8 / size.y;
+  const root = new THREE.Group(); root.name = "operator";
+  const fix = new THREE.Group(); fix.name = "operator_fix";
+  fix.rotation.y = Math.PI;
+  fix.scale.setScalar(s);
+  fix.position.set(0, -body.min.y * s, 0);
+  src.position.set(-hp.x, 0, -hp.z);
+  fix.add(src); root.add(fix);
+  root.updateMatrixWorld(true);
+  const b2 = new THREE.Box3().setFromObject(root);
+  log.push(`scale ${s.toFixed(5)} height ${size.y.toFixed(1)} -> box ${b2.min.toArray().map((x) => x.toFixed(2))} .. ${b2.max.toArray().map((x) => x.toFixed(2))} tris ${tris}`);
+  const glb = await new GLTFExporter().parseAsync(root, { binary: true, onlyVisible: true });
+  const bytes = new Uint8Array(glb);
+  let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return { log, b64: btoa(bin) };
+};
+window.ready = true;
+</script></body></html>

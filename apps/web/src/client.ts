@@ -1,23 +1,31 @@
-// The game client: networking, input, prediction and interpolation. No React in here —
-// the 3D scene reads it every frame and the HUD subscribes to a throttled change signal.
+// The game client: networking, prediction and interpolation. No React and no rendering in here.
+// The original Saltline renderer (see game/bridge.ts) feeds it input every frame and draws what
+// it reports; the React overlay subscribes to a throttled change signal.
 
 import init, { Predictor } from "./wasm/game_wasm.js";
-import { lookDir, type Input, type MapData, type PlayerId, type PlayerSnap, type ServerMsg, type V3 } from "./protocol";
+import { type Input, type MapData, type PlayerId, type PlayerSnap, type ServerMsg, type V3 } from "./protocol";
 import { api, session, type Me } from "./api";
 
 export const TICK_HZ = 30;
 export const DT = 1 / TICK_HZ;
 /** Remote players are drawn this far in the past so there are always two snapshots to blend. */
 export const INTERP_MS = 100;
-const FIRE_INTERVAL = 0.1;
-const MOUSE_SENS = 0.0022;
 
 let wasmReady: Promise<unknown> | null = null;
 
 interface Pose { t: number; pos: V3; yaw: number; pitch: number; crouch: boolean; alive: boolean }
 export interface Remote { id: PlayerId; name: string; buf: Pose[]; hp: number; alive: boolean; kills: number; deaths: number; firedAt: number; bot: boolean; cosmetic: string | null }
-export interface Tracer { from: V3; to: V3; born: number; mine: boolean }
 export interface FeedLine { id: number; text: string; mine: boolean; t: number }
+/** Things the renderer animates (sounds, tracers, hit markers, damage direction...). */
+export type ClientEvent =
+  | { t: "shot"; shooter: PlayerId; from: V3; to: V3 }
+  | { t: "hit"; shooter: PlayerId; target: PlayerId; damage: number; head: boolean }
+  | { t: "kill"; killer: PlayerId; victim: PlayerId; head: boolean; killerName: string; victimName: string }
+  | { t: "joined"; name: string }
+  | { t: "left"; name: string }
+  | { t: "match_end"; winner: PlayerId | null; text: string };
+/** What the player is asking to do this frame (read from the original game's input system). */
+export interface ControlState { mx: number; mz: number; sprint: boolean; crouch: boolean; fire: boolean }
 
 export class GameClient {
   ws: WebSocket | null = null;
@@ -33,18 +41,22 @@ export class GameClient {
   me = { hp: 100, alive: true, ammo: 30, reloading: false, kills: 0, deaths: 0 };
   lastTick = 0;
   rtt = 0;
+  /** True once the server has told us where we spawned. */
+  hasSelf = false;
 
-  // Input state.
+  // Input state: aim and controls are written by the renderer every frame.
   yaw = 0;
   pitch = 0;
+  control: ControlState = { mx: 0, mz: 0, sprint: false, crouch: false, fire: false };
+  /** Keys the overlay cares about (Tab for the scoreboard). */
   keys = new Set<string>();
-  fireHeld = false;
   private jumpQueued = false;
   private reloadQueued = false;
   private seq = 0;
   private acc = 0;
-  private fireCd = 0;
   locked = false;
+  /** Set by the renderer bridge to animate server events. */
+  onEvent: ((e: ClientEvent) => void) | null = null;
 
   // Smoothed local position (prediction runs at 30 Hz, rendering at screen rate).
   prev: V3 = [0, 0, 0];
@@ -52,10 +64,7 @@ export class GameClient {
   eyeHeight = 1.6;
 
   remotes = new Map<PlayerId, Remote>();
-  tracers: Tracer[] = [];
   feed: FeedLine[] = [];
-  hitMarker = { t: -1, head: false, kill: false };
-  hurt = { t: -1, from: null as V3 | null };
   banner = { text: "", t: -1 };
   /** Signed-in player's profile after the last finished match (for the match-end card). */
   result: { me: Me; before: number; t: number } | null = null;
@@ -115,17 +124,11 @@ export class GameClient {
   }
 
   // ------------------------------------------------------------------ input
-  onMouseMove(dx: number, dy: number) {
-    if (!this.locked) return;
-    this.yaw -= dx * MOUSE_SENS;
-    this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - dy * MOUSE_SENS));
+  queueJump() {
+    this.jumpQueued = true;
   }
-  onKey(code: string, down: boolean) {
-    if (down) {
-      if (code === "Space" && !this.keys.has(code)) this.jumpQueued = true;
-      if (code === "KeyR") this.reloadQueued = true;
-      this.keys.add(code);
-    } else this.keys.delete(code);
+  queueReload() {
+    this.reloadQueued = true;
   }
 
   /** Called every animation frame. Runs as many fixed 30 Hz ticks as real time requires. */
@@ -136,8 +139,6 @@ export class GameClient {
       this.acc -= DT;
       this.tick();
     }
-    const now = performance.now();
-    this.tracers = this.tracers.filter((t) => now - t.born < 140);
   }
 
   /** 0..1 progress between the last two predicted ticks, for smooth camera motion. */
@@ -150,14 +151,11 @@ export class GameClient {
     // Never send a non-number aim (the server would reject the input).
     if (!Number.isFinite(this.yaw)) this.yaw = 0;
     if (!Number.isFinite(this.pitch)) this.pitch = 0;
-    const k = this.keys;
-    const mx = (k.has("KeyD") ? 1 : 0) - (k.has("KeyA") ? 1 : 0);
-    const mz = (k.has("KeyW") ? 1 : 0) - (k.has("KeyS") ? 1 : 0);
-    const crouch = k.has("KeyC") || k.has("ControlLeft");
-    const sprint = k.has("ShiftLeft") || k.has("ShiftRight");
+    const c = this.control;
+    const fire = c.fire && this.me.alive;
     const input: Input = {
-      seq: ++this.seq, mx, mz, yaw: this.yaw, pitch: this.pitch,
-      jump: this.jumpQueued, sprint, crouch, fire: this.fireHeld && this.locked,
+      seq: ++this.seq, mx: c.mx, mz: c.mz, yaw: this.yaw, pitch: this.pitch,
+      jump: this.jumpQueued, sprint: c.sprint, crouch: c.crouch, fire,
       reload: this.reloadQueued,
       // We draw others INTERP_MS in the past; tell the server which moment we were looking at.
       view_tick: Math.max(0, this.lastTick - Math.round((INTERP_MS / 1000) * TICK_HZ)),
@@ -166,22 +164,23 @@ export class GameClient {
     this.reloadQueued = false;
 
     this.prev = this.curr;
-    p.apply(input.seq, mx, mz, this.yaw, this.pitch, input.jump, sprint, crouch);
+    p.apply(input.seq, c.mx, c.mz, this.yaw, this.pitch, input.jump, c.sprint, c.crouch, fire);
     this.curr = [p.x(), p.y(), p.z()];
     this.eyeHeight = p.eye_y() - p.y();
     this.send({ t: "input", inputs: [input] });
+  }
 
-    // Instant local feedback for our own shot; the server still decides whether it hit.
-    this.fireCd = Math.max(0, this.fireCd - DT);
-    if (input.fire && this.fireCd === 0 && this.me.alive && !this.me.reloading && this.me.ammo > 0) {
-      this.fireCd = FIRE_INTERVAL;
-      const eye: V3 = [this.curr[0], this.curr[1] + this.eyeHeight, this.curr[2]];
-      const d = lookDir(this.yaw, this.pitch);
-      const dist = p.raycast(eye[0], eye[1], eye[2], d[0], d[1], d[2], 200);
-      // Muzzle sits a little right of and below the eye (right = (cos yaw, 0, -sin yaw)).
-      const gun: V3 = [eye[0] + d[0] * 0.6 + Math.cos(this.yaw) * 0.15, eye[1] - 0.18, eye[2] + d[2] * 0.6 - Math.sin(this.yaw) * 0.15];
-      this.tracers.push({ from: gun, to: [eye[0] + d[0] * dist, eye[1] + d[1] * dist, eye[2] + d[2] * dist], born: performance.now(), mine: true });
-    }
+  /** Predicted local position, smoothed between the last two ticks. */
+  smoothPos(): V3 {
+    const a = Math.min(1, this.alpha), P = this.prev, C = this.curr;
+    return [P[0] + (C[0] - P[0]) * a, P[1] + (C[1] - P[1]) * a, P[2] + (C[2] - P[2]) * a];
+  }
+  predictedVel(): V3 {
+    const p = this.predictor;
+    return p ? [p.vx(), p.vy(), p.vz()] : [0, 0, 0];
+  }
+  predictedOnGround() {
+    return this.predictor ? this.predictor.on_ground() : true;
   }
 
   // ------------------------------------------------------------------ messages
@@ -193,12 +192,21 @@ export class GameClient {
     this.feed = [...this.feed.slice(-4), { id: ++this.feedId, text, mine, t: performance.now() }];
   }
 
+  private emit(e: ClientEvent) {
+    try {
+      this.onEvent?.(e);
+    } catch (err) {
+      console.error("[client] event handler", err);
+    }
+  }
+
   private onMsg(m: ServerMsg) {
     const now = performance.now();
     switch (m.t) {
       case "welcome": {
         this.id = m.id;
         this.result = null;
+        this.hasSelf = false;
         this.map = m.map;
         this.killTarget = m.kill_target;
         this.predictor = new Predictor(JSON.stringify(m.map));
@@ -221,36 +229,38 @@ export class GameClient {
       }
       case "shot":
         if (m.shooter !== this.id) {
-          this.tracers.push({ from: m.from, to: m.to, born: now, mine: false });
           const r = this.remotes.get(m.shooter);
           if (r) r.firedAt = now;
+          this.emit({ t: "shot", shooter: m.shooter, from: m.from, to: m.to });
         }
         break;
       case "hit":
-        if (m.shooter === this.id) this.hitMarker = { t: now, head: m.head, kill: false };
-        if (m.target === this.id) {
-          const r = this.remotes.get(m.shooter);
-          const last = r?.buf[r.buf.length - 1];
-          this.hurt = { t: now, from: last ? last.pos : null };
-        }
+        this.emit({ t: "hit", shooter: m.shooter, target: m.target, damage: m.damage, head: m.head });
         break;
-      case "kill":
-        if (m.killer === this.id) this.hitMarker = { t: now, head: m.head, kill: true };
-        this.pushFeed(`${this.nameOf(m.killer)} ▸ ${this.nameOf(m.victim)}${m.head ? "  ·  head" : ""}`, m.killer === this.id || m.victim === this.id);
+      case "kill": {
+        const killerName = this.nameOf(m.killer), victimName = this.nameOf(m.victim);
+        this.pushFeed(`${killerName} ▸ ${victimName}${m.head ? "  ·  head" : ""}`, m.killer === this.id || m.victim === this.id);
+        this.emit({ t: "kill", killer: m.killer, victim: m.victim, head: m.head, killerName, victimName });
         this.notify();
         break;
+      }
       case "joined":
-        if (m.id !== this.id) this.pushFeed(`${m.name} joined`, false);
+        if (m.id !== this.id) {
+          this.pushFeed(`${m.name} joined`, false);
+          this.emit({ t: "joined", name: m.name });
+        }
         this.notify();
         break;
       case "left":
         this.pushFeed(`${this.nameOf(m.id)} left`, false);
+        this.emit({ t: "left", name: this.nameOf(m.id) });
         this.remotes.delete(m.id);
         this.notify();
         break;
       case "match_end": {
         const w = m.winner;
         this.banner = { text: w == null ? "Match over" : w === this.id ? "You win the match" : `${this.nameOf(w)} wins the match`, t: now };
+        this.emit({ t: "match_end", winner: w, text: this.banner.text });
         this.notify();
         // Rating changes are computed after the match is recorded; fetch them shortly after.
         if (session.token && this.profile) {
@@ -278,8 +288,9 @@ export class GameClient {
     const p = this.predictor!;
     p.reconcile(ack, s.pos[0], s.pos[1], s.pos[2], s.vel[0], s.vel[1], s.vel[2], s.crouch, s.alive);
     const c: V3 = [p.x(), p.y(), p.z()];
-    // A respawn is a teleport: snap the camera and face where the server spawned us.
-    if (!wasAlive && s.alive) {
+    // The first snapshot and every respawn are teleports: snap and face where the server put us.
+    if (!this.hasSelf || (!wasAlive && s.alive)) {
+      this.hasSelf = true;
       this.prev = c;
       this.yaw = s.yaw;
       this.pitch = 0;

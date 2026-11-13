@@ -78,6 +78,8 @@ pub struct Room {
     pub finished: Vec<MatchSummary>,
     pub kill_target: u32,
     pub match_ticks: u32,
+    /// Spawn next to the action instead of away from it (practice rooms and browser tests).
+    pub spawn_near: bool,
     end_now: bool,
 }
 
@@ -95,6 +97,7 @@ impl Room {
             finished: Vec::new(),
             kill_target: KILL_TARGET,
             match_ticks: MATCH_TICKS,
+            spawn_near: false,
             end_now: false,
         }
     }
@@ -135,6 +138,15 @@ impl Room {
             .iter()
             .map(|s| (enemies.iter().map(|e| e.distance(s.pos)).fold(60.0, f32::min), s.clone()))
             .collect();
+        if self.spawn_near && !enemies.is_empty() {
+            // Closest spawn that is not on top of someone (practice / tests).
+            scored.retain(|(d, _)| *d > 4.0);
+            scored.sort_by(|a, b| a.0.total_cmp(&b.0));
+            if let Some((_, s)) = scored.first() {
+                return s.clone();
+            }
+            return Spawn { pos: Vec3::ZERO, yaw: 0.0 };
+        }
         scored.sort_by(|a, b| b.0.total_cmp(&a.0));
         if scored.is_empty() {
             return Spawn { pos: Vec3::ZERO, yaw: 0.0 };
@@ -273,15 +285,15 @@ impl Room {
         // 2. Shots, judged on the server with lag compensation.
         for (shooter, inp) in fired {
             let s = self.players[&shooter].state;
-            if !s.alive || s.fire_cd > 0.0 || s.reload_t > 0.0 || s.ammo == 0 {
+            if !s.alive || s.fire_cd > 1e-4 || s.reload_t > 0.0 || s.ammo == 0 {
                 continue;
             }
             {
                 let p = self.players.get_mut(&shooter).unwrap();
                 p.state.ammo -= 1;
-                p.state.fire_cd = RIFLE.interval;
+                p.state.fire_cd = p.state.fire_cd.min(0.0) + RIFLE.interval;
                 if p.state.ammo == 0 {
-                    p.state.reload_t = RIFLE.reload_secs;
+                    p.state.reload_t = RIFLE.reload_empty_secs;
                 }
             }
             let eye = s.eye();

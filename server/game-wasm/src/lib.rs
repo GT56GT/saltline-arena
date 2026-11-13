@@ -31,8 +31,9 @@ impl Predictor {
 
     /// Predict one tick of local movement and remember the input for replay.
     #[allow(clippy::too_many_arguments)]
-    pub fn apply(&mut self, seq: u32, mx: f32, mz: f32, yaw: f32, pitch: f32, jump: bool, sprint: bool, crouch: bool) {
-        let input = Input { seq, mx, mz, yaw, pitch, jump, sprint, crouch, ..Default::default() };
+    pub fn apply(&mut self, seq: u32, mx: f32, mz: f32, yaw: f32, pitch: f32, jump: bool, sprint: bool, crouch: bool, fire: bool) {
+        // `fire` matters for movement too: shooting cancels a sprint.
+        let input = Input { seq, mx, mz, yaw, pitch, jump, sprint, crouch, fire, ..Default::default() };
         step_player(&mut self.state, &input, &self.map);
         self.pending.push_back(input);
         while self.pending.len() > 120 {
@@ -65,6 +66,11 @@ impl Predictor {
     pub fn y(&self) -> f32 { self.state.pos.y }
     pub fn z(&self) -> f32 { self.state.pos.z }
     pub fn eye_y(&self) -> f32 { self.state.eye().y }
+    pub fn vx(&self) -> f32 { self.state.vel.x }
+    pub fn vy(&self) -> f32 { self.state.vel.y }
+    pub fn vz(&self) -> f32 { self.state.vel.z }
+    pub fn on_ground(&self) -> bool { self.state.on_ground }
+    pub fn crouching(&self) -> bool { self.state.crouching }
     pub fn speed(&self) -> f32 { Vec3::new(self.state.vel.x, 0.0, self.state.vel.z).length() }
     pub fn last_error(&self) -> f32 { self.last_error }
     pub fn pending(&self) -> u32 { self.pending.len() as u32 }
@@ -86,7 +92,7 @@ mod tests {
         let mut client = Predictor::new(&json).unwrap();
         let mut server = PlayerState::spawn(Vec3::ZERO, 0.0);
         for seq in 1..=10 {
-            client.apply(seq, 0.0, 1.0, 0.0, 0.0, false, false, false);
+            client.apply(seq, 0.0, 1.0, 0.0, 0.0, false, false, false, false);
         }
         // Server has processed the first 6 inputs only (latency).
         for seq in 1..=6 {
