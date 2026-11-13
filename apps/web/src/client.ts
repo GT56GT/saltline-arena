@@ -3,7 +3,7 @@
 // it reports; the React overlay subscribes to a throttled change signal.
 
 import init, { Predictor } from "./wasm/game_wasm.js";
-import { type Input, type MapData, type PlayerId, type PlayerSnap, type ServerMsg, type V3 } from "./protocol";
+import { type Input, type MapData, type PlayerId, type PlayerSnap, type RoomConfig, type RoomState, type ServerMsg, type V3 } from "./protocol";
 import { api, session, type Me } from "./api";
 
 export const TICK_HZ = 30;
@@ -14,7 +14,11 @@ export const INTERP_MS = 100;
 let wasmReady: Promise<unknown> | null = null;
 
 interface Pose { t: number; pos: V3; yaw: number; pitch: number; crouch: boolean; alive: boolean }
-export interface Remote { id: PlayerId; name: string; buf: Pose[]; hp: number; alive: boolean; kills: number; deaths: number; firedAt: number; bot: boolean; cosmetic: string | null }
+export interface Remote { id: PlayerId; name: string; buf: Pose[]; hp: number; alive: boolean; kills: number; deaths: number; firedAt: number; bot: boolean; cosmetic: string | null; team: number | null }
+/** How to enter: public matchmaking, a new private room (we host), or a room code. */
+export type JoinRequest = { kind: "quick" } | { kind: "create"; config: RoomConfig } | { kind: "code"; code: string };
+export const TEAM_NAMES = ["Harbour", "Rust"] as const;
+export const TEAM_COLORS = ["#3fb6ad", "#e2733a"] as const;
 export interface FeedLine { id: number; text: string; mine: boolean; t: number }
 /** Things the renderer animates (sounds, tracers, hit markers, damage direction...). */
 export type ClientEvent =
@@ -23,7 +27,8 @@ export type ClientEvent =
   | { t: "kill"; killer: PlayerId; victim: PlayerId; head: boolean; killerName: string; victimName: string }
   | { t: "joined"; name: string }
   | { t: "left"; name: string }
-  | { t: "match_end"; winner: PlayerId | null; text: string };
+  | { t: "match_end"; winner: PlayerId | null; text: string }
+  | { t: "room" };
 /** What the player is asking to do this frame (read from the original game's input system). */
 export interface ControlState { mx: number; mz: number; sprint: boolean; crouch: boolean; fire: boolean }
 
@@ -38,7 +43,15 @@ export class GameClient {
   killTarget = 30;
 
   // Local player, as the server last reported it.
-  me = { hp: 100, alive: true, ammo: 30, reloading: false, kills: 0, deaths: 0 };
+  me = { hp: 100, alive: true, ammo: 30, reloading: false, kills: 0, deaths: 0, team: null as number | null };
+  /** Private room (null in public matchmaking). */
+  room: RoomState | null = null;
+  teamScores: [number, number] | null = null;
+  /** Bumped whenever the server puts us somewhere new (join, respawn, match start). */
+  spawnSeq = 0;
+  /** Last error the server sent (e.g. "only the host can start"), for the overlay. */
+  notice = { text: "", t: -1 };
+  private snapNext = false;
   lastTick = 0;
   rtt = 0;
   /** True once the server has told us where we spawned. */
@@ -81,7 +94,7 @@ export class GameClient {
     for (const fn of this.listeners) fn();
   }
 
-  async connect(url: string, name: string) {
+  async connect(url: string, name: string, join: JoinRequest = { kind: "quick" }) {
     this.name = name;
     this.status = "connecting";
     this.error = "";
@@ -90,7 +103,14 @@ export class GameClient {
     await wasmReady;
     const ws = new WebSocket(url);
     this.ws = ws;
-    ws.onopen = () => ws.send(JSON.stringify({ t: "hello", name, token: session.token ?? undefined }));
+    this.room = null;
+    this.teamScores = null;
+    ws.onopen = () =>
+      ws.send(JSON.stringify({
+        t: "hello", name, token: session.token ?? undefined,
+        room: join.kind === "code" ? join.code : undefined,
+        create: join.kind === "create" ? join.config : undefined,
+      }));
     if (session.token) api.me().then((m) => { this.profile = m; }).catch(() => {});
     ws.onmessage = (ev) => {
       try {
@@ -117,6 +137,20 @@ export class GameClient {
     this.status = "idle";
     this.remotes.clear();
     this.notify();
+  }
+
+  // ------------------------------------------------------------------ private rooms
+  setTeam(team: number) {
+    this.send({ t: "set_team", team });
+  }
+  configure(config: RoomConfig) {
+    this.send({ t: "configure", config });
+  }
+  startMatch() {
+    this.send({ t: "start" });
+  }
+  get isHost() {
+    return !!this.room && this.room.host === this.id;
   }
 
   private send(m: unknown) {
@@ -218,6 +252,7 @@ export class GameClient {
         this.lastTick = m.tick;
         this.me.ammo = m.ammo;
         this.me.reloading = m.reloading;
+        this.teamScores = m.team_scores ?? null;
         const seen = new Set<PlayerId>();
         for (const s of m.players) {
           seen.add(s.id);
@@ -259,7 +294,14 @@ export class GameClient {
         break;
       case "match_end": {
         const w = m.winner;
-        this.banner = { text: w == null ? "Match over" : w === this.id ? "You win the match" : `${this.nameOf(w)} wins the match`, t: now };
+        const wt = m.winner_team;
+        const ts = m.team_scores;
+        this.banner = {
+          text: ts
+            ? wt == null ? `Draw ${ts[0]}–${ts[1]}` : `${TEAM_NAMES[wt]} wins ${ts[wt]}–${ts[1 - wt]}${wt === this.me.team ? " · your team" : ""}`
+            : w == null ? "Match over" : w === this.id ? "You win the match" : `${this.nameOf(w)} wins the match`,
+          t: now,
+        };
         this.emit({ t: "match_end", winner: w, text: this.banner.text });
         this.notify();
         // Rating changes are computed after the match is recorded; fetch them shortly after.
@@ -271,26 +313,40 @@ export class GameClient {
         }
         break;
       }
+      case "room": {
+        const { t: _t, ...room } = m;
+        void _t;
+        this.room = room;
+        this.emit({ t: "room" });
+        this.notify();
+        break;
+      }
       case "pong":
         this.rtt = Math.round(now - m.c);
         break;
       case "error":
         console.warn("[server]", m.msg);
+        this.notice = { text: m.msg, t: now };
+        if (this.status === "connecting") this.error = m.msg;
+        this.notify();
         break;
       case "respawn":
+        if (m.id === this.id) this.snapNext = true;
         break;
     }
   }
 
   private applySelf(s: PlayerSnap, ack: number) {
     const wasAlive = this.me.alive;
-    Object.assign(this.me, { hp: s.hp, alive: s.alive, kills: s.kills, deaths: s.deaths });
+    Object.assign(this.me, { hp: s.hp, alive: s.alive, kills: s.kills, deaths: s.deaths, team: s.team ?? null });
     const p = this.predictor!;
     p.reconcile(ack, s.pos[0], s.pos[1], s.pos[2], s.vel[0], s.vel[1], s.vel[2], s.crouch, s.alive);
     const c: V3 = [p.x(), p.y(), p.z()];
     // The first snapshot and every respawn are teleports: snap and face where the server put us.
-    if (!this.hasSelf || (!wasAlive && s.alive)) {
+    if (!this.hasSelf || (!wasAlive && s.alive) || (this.snapNext && s.alive)) {
       this.hasSelf = true;
+      this.snapNext = false;
+      this.spawnSeq++;
       this.prev = c;
       this.yaw = s.yaw;
       this.pitch = 0;
@@ -302,12 +358,12 @@ export class GameClient {
   private applyRemote(s: PlayerSnap, now: number) {
     let r = this.remotes.get(s.id);
     if (!r) {
-      r = { id: s.id, name: s.name, buf: [], hp: 100, alive: true, kills: 0, deaths: 0, firedAt: 0, bot: !!s.bot, cosmetic: s.cosmetic ?? null };
+      r = { id: s.id, name: s.name, buf: [], hp: 100, alive: true, kills: 0, deaths: 0, firedAt: 0, bot: !!s.bot, cosmetic: s.cosmetic ?? null, team: s.team ?? null };
       this.remotes.set(s.id, r);
     }
     r.buf.push({ t: now, pos: s.pos, yaw: s.yaw, pitch: s.pitch, crouch: s.crouch, alive: s.alive });
     if (r.buf.length > 20) r.buf.shift();
-    Object.assign(r, { hp: s.hp, alive: s.alive, kills: s.kills, deaths: s.deaths, name: s.name, bot: !!s.bot, cosmetic: s.cosmetic ?? null });
+    Object.assign(r, { hp: s.hp, alive: s.alive, kills: s.kills, deaths: s.deaths, name: s.name, bot: !!s.bot, cosmetic: s.cosmetic ?? null, team: s.team ?? null });
   }
 
   /** A remote player's pose, interpolated INTERP_MS in the past. */
@@ -333,8 +389,8 @@ export class GameClient {
   }
 
   scoreboard() {
-    const rows = [{ id: this.id, name: `${this.name} (you)`, kills: this.me.kills, deaths: this.me.deaths, me: true, bot: false }];
-    for (const r of this.remotes.values()) rows.push({ id: r.id, name: r.name, kills: r.kills, deaths: r.deaths, me: false, bot: r.bot });
+    const rows = [{ id: this.id, name: `${this.name} (you)`, kills: this.me.kills, deaths: this.me.deaths, me: true, bot: false, team: this.me.team }];
+    for (const r of this.remotes.values()) rows.push({ id: r.id, name: r.name, kills: r.kills, deaths: r.deaths, me: false, bot: r.bot, team: r.team });
     return rows.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
   }
 }

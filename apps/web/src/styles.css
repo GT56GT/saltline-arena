@@ -141,3 +141,38 @@ kbd { display: inline-block; font: 500 10px/1 var(--f-mono); border: 1px solid r
 .hud .gone b { font: 900 clamp(36px, 7vw, 72px)/.9 var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--alarm); }
 .hud .gone span { font: 500 13px/1.4 var(--f-mono); color: var(--bone-dim); max-width: 520px; text-align: center; }
 .hud .dead { background: radial-gradient(ellipse, rgba(40, 6, 2, 0), rgba(40, 6, 2, .45)); }
+
+/* ---- lobby: play with friends ---- */
+.friends { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; padding-top: 14px; border-top: 1px solid var(--line); }
+.friends .k { font: 600 11px/1 var(--f-label); letter-spacing: .2em; text-transform: uppercase; color: var(--steel); }
+.friends .row { display: flex; gap: 8px; align-items: stretch; }
+.friends .row input { width: 7.5em; text-transform: uppercase; letter-spacing: .2em; font-family: var(--f-mono); text-align: center; }
+
+/* ---- in-match room panel ---- */
+.hud .room-panel { position: absolute; left: calc(16px + env(safe-area-inset-left)); top: calc(124px + env(safe-area-inset-top)); width: min(380px, calc(100vw - 32px)); max-height: calc(100vh - 200px); overflow: auto; pointer-events: auto; text-shadow: none; background: var(--plate-solid); border: 1px solid var(--line); border-top: 3px solid var(--signal); padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.room-panel .rp-head { display: flex; align-items: center; gap: 10px; }
+.room-panel .rp-head .k { font: 600 11px/1 var(--f-label); letter-spacing: .2em; text-transform: uppercase; color: var(--steel); }
+.room-panel .code { font: 700 26px/1 var(--f-mono); letter-spacing: .18em; color: var(--signal); margin-right: auto; }
+.room-panel .rp-state { font: 500 12px/1.3 var(--f-mono); color: var(--bone-dim); margin: 0; }
+.room-panel .rp-teams { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.room-panel .rp-team { border-top: 3px solid; padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.room-panel .rp-team-h { display: flex; justify-content: space-between; align-items: baseline; }
+.room-panel .rp-team-h b { font: 700 16px/1 var(--f-display); letter-spacing: .12em; text-transform: uppercase; }
+.room-panel .rp-team-h span { font: 500 11px/1 var(--f-mono); color: var(--steel); }
+.room-panel ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; min-height: 22px; }
+.room-panel li { font: 600 14px/1.2 var(--f-label); letter-spacing: .06em; text-transform: uppercase; }
+.room-panel li.me { color: var(--signal); }
+.room-panel .tagx { font: 600 9px/1 var(--f-mono); font-style: normal; letter-spacing: .1em; color: var(--signal); border: 1px solid currentColor; padding: 1px 3px; margin-left: 6px; vertical-align: 2px; }
+.room-panel .rp-settings { display: flex; flex-direction: column; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line); }
+.room-panel .seg { display: flex; }
+.room-panel .seg button { flex: 1; padding: 8px; font: 600 12px/1 var(--f-label); letter-spacing: .14em; text-transform: uppercase; background: transparent; color: var(--bone-dim); border: 1px solid var(--line); cursor: pointer; }
+.room-panel .seg button[aria-pressed="true"] { background: var(--signal); color: #111; border-color: var(--signal); }
+.room-panel .chk { display: flex; gap: 8px; align-items: flex-start; font: 500 13px/1.3 var(--f-label); color: var(--bone); cursor: pointer; }
+.room-panel .sels { display: flex; gap: 10px; }
+.room-panel .sel { display: flex; flex-direction: column; gap: 4px; font: 600 10px/1 var(--f-label); letter-spacing: .16em; text-transform: uppercase; color: var(--steel); flex: 1; }
+.room-panel select { font: 500 13px/1 var(--f-mono); padding: 6px; background: transparent; color: var(--bone); border: 1px solid var(--line); }
+.room-panel .hint { margin: 0; font: 400 12px/1.4 var(--f-mono); color: var(--bone-dim); }
+.room-panel .err { margin: 0; font: 500 12px/1.4 var(--f-mono); color: var(--alarm); }
+.btn.sm { padding: 6px 10px; font-size: 11px; }
+.hud .warmup-tag { position: absolute; left: 50%; top: calc(84px + env(safe-area-inset-top)); transform: translateX(-50%); font: 600 12px/1 var(--f-mono); letter-spacing: .16em; text-transform: uppercase; color: var(--signal); background: rgba(8, 10, 12, .55); padding: 7px 12px; }
+.scores .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }

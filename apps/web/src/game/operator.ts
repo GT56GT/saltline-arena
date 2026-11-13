@@ -97,7 +97,8 @@ export class Operator {
   private tag: any;
   private tagCanvas: HTMLCanvasElement;
   private tagText = "";
-  private cosmetic: string | null | undefined = undefined;
+  private lookKey = "";
+  private accent = "#ffb347";
   private parts: any[] = [];
   private restFootY = 0;
   private headFwd: any;
@@ -164,7 +165,7 @@ export class Operator {
     this.tag.renderOrder = 10;
     this.root.add(this.tag);
     this.setName(name);
-    this.setCosmetic(null, null);
+    this.setLook(null, null, null, false);
   }
 
   private footY() {
@@ -195,6 +196,11 @@ export class Operator {
   setName(name: string) {
     if (name === this.tagText) return;
     this.tagText = name;
+    this.drawTag();
+  }
+
+  private drawTag() {
+    const name = this.tagText;
     const c = this.tagCanvas.getContext("2d")!;
     c.clearRect(0, 0, 256, 64);
     c.font = '600 30px "Barlow Condensed", "Arial Narrow", sans-serif';
@@ -203,23 +209,31 @@ export class Operator {
     const w = Math.min(240, c.measureText(name).width + 28);
     c.fillStyle = "rgba(8,10,12,0.62)";
     c.fillRect(128 - w / 2, 14, w, 36);
-    c.fillStyle = "#ffb347";
+    c.fillStyle = this.accent;
     c.fillRect(128 - w / 2, 14, 3, 36);
     c.fillStyle = "#eef2f0";
     c.fillText(name.toUpperCase(), 130, 33);
     this.tag.material.map.needsUpdate = true;
   }
 
-  /** Cosmetics: "plates" recolour the plate carrier and helmet, "visor" lights up the goggles. */
-  setCosmetic(id: string | null, look: { slot: "visor" | "plates"; color: string } | null) {
-    if (id === this.cosmetic) return;
-    this.cosmetic = id;
-    const plates = look && look.slot === "plates" ? this.k.kit.plates(look.color) : null;
+  /**
+   * Look: cosmetics ("plates" recolour the plate carrier and helmet, "visor" lights the goggles),
+   * then the team colour on top (team rooms). Teammates' name tags show through walls.
+   */
+  setLook(id: string | null, look: { slot: "visor" | "plates"; color: string } | null, teamColor: string | null, ally: boolean) {
+    const key = `${id}|${teamColor}|${ally}`;
+    if (key === this.lookKey) return;
+    this.lookKey = key;
+    const plateColor = teamColor || (look && look.slot === "plates" ? look.color : null);
+    const plates = plateColor ? this.k.kit.plates(plateColor) : null;
     for (const o of this.parts) {
       const p = o.userData.part;
       if (p === "vest" || p === "helmet") o.material = plates || this.k.mats[p];
       if (p === "googles") o.material = this.k.kit.visor(look && look.slot === "visor" ? look.color : null);
     }
+    this.accent = teamColor || "#ffb347";
+    this.tag.material.depthTest = !ally;
+    this.drawTag();
   }
 
   muzzleWorld(out: any) {

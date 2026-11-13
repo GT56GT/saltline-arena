@@ -8,7 +8,7 @@
 //   - draws other players (avatar.ts) and their shots, hits and kills with the game's own effects.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { ClientEvent, GameClient } from "../client";
+import { TEAM_COLORS, TEAM_NAMES, type ClientEvent, type GameClient } from "../client";
 import type { V3 } from "../protocol";
 import { COSMETICS } from "../cosmetics";
 import { Avatar, makeKit, type Kit } from "./avatar";
@@ -38,6 +38,12 @@ export function attachRenderer(win: any, client: GameClient): () => void {
   const on = (name: string, fn: (e: any) => void) => offs.push(E.on(name, fn));
   let started = false;
   let wasAlive = true;
+  let lastSpawn = -1;
+  /** In a team room without friendly fire, teammates are not targets. */
+  const isAlly = (id: number) => {
+    const r = client.remotes.get(id);
+    return !!client.room && client.room.config.teams && r != null && r.team != null && r.team === client.me.team;
+  };
   let lastLocalShot = -1e9;
   let lastLocalHit = -1e9;
   let lockHintT = 0.8;
@@ -52,7 +58,9 @@ export function attachRenderer(win: any, client: GameClient): () => void {
   const origRaycast = G.enemies.raycast;
   G.enemies.raycast = (o: any, d: any, max: number) => {
     let best: any = null;
+    const ff = !client.room || client.room.config.friendly_fire;
     for (const [id, a] of avatars) {
+      if (!ff && isAlly(id)) continue;
       const h = a.raycast(o, d, best ? best.dist : max);
       if (h) best = { id, ...h };
     }
@@ -142,6 +150,7 @@ export function attachRenderer(win: any, client: GameClient): () => void {
   };
   const start = () => {
     started = true;
+    lastSpawn = client.spawnSeq;
     spawnHere();
     P.enabled = true;
     try { H.reset(); H.show(true); } catch { /* */ }
@@ -179,10 +188,12 @@ export function attachRenderer(win: any, client: GameClient): () => void {
     if (wasAlive && !alive) {
       P.arenaDie && P.arenaDie();
       E.emit("player:dead", {});
-    } else if (!wasAlive && alive) {
+    } else if (alive && client.spawnSeq !== lastSpawn) {
+      // Respawn, or the host started the match and everyone was moved to a fresh spawn.
       spawnHere();
       H.message("", 0);
     }
+    lastSpawn = client.spawnSeq;
     wasAlive = alive;
 
     // Input from the game's own input system.
@@ -222,7 +233,8 @@ export function attachRenderer(win: any, client: GameClient): () => void {
       }
       a.setName(r.name);
       const look = r.cosmetic ? COSMETICS[r.cosmetic] ?? null : null;
-      a.setCosmetic(r.cosmetic, look);
+      const teams = !!client.room && client.room.config.teams;
+      a.setLook(r.cosmetic, look, teams && r.team != null ? TEAM_COLORS[r.team] : null, teams && r.team != null && r.team === client.me.team);
       const pose = client.remotePose(r, now);
       if (pose) a.update(pose, dt, camPos);
     }
@@ -231,7 +243,17 @@ export function attachRenderer(win: any, client: GameClient): () => void {
     // Match panel (the original objective slot).
     let leader = { name: "", kills: -1 };
     for (const r of client.remotes.values()) if (r.kills > leader.kills) leader = { name: r.name, kills: r.kills };
-    const text = `First to ${client.killTarget}: you ${client.me.kills}` + (leader.kills > client.me.kills ? ` · ${leader.name} ${leader.kills}` : leader.kills >= 0 ? " · leading" : "");
+    const room = client.room;
+    const ts = client.teamScores;
+    const target = room ? room.config.kill_target : client.killTarget;
+    const text = room && !room.live
+      ? (client.isHost ? "Warm-up · Esc, then Start match" : "Warm-up · waiting for the host")
+      : room && room.config.teams && ts
+        ? `${TEAM_NAMES[0]} ${ts[0]} – ${ts[1]} ${TEAM_NAMES[1]} · first to ${target}` + (client.me.team != null ? ` · you: ${TEAM_NAMES[client.me.team]}` : "")
+        : `First to ${target}: you ${client.me.kills}` + (leader.kills > client.me.kills ? ` · ${leader.name} ${leader.kills}` : leader.kills >= 0 ? " · leading" : "");
+    const k = win.document.querySelector(".hud .h-obj .h-k");
+    const label = room ? (room.config.teams ? "Team match" : "Free for all") + ` · room ${room.code}` : "Free for all";
+    if (k && k.textContent !== label) k.textContent = label;
     if (text !== objective) { objective = text; H.setObjective(text); }
 
     // Mouse-capture hint, like the original director.

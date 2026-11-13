@@ -82,6 +82,7 @@ async fn matches_update_ratings_award_badges_and_are_signed() {
     let (a, b) = (acc(&ta).await, acc(&tb).await);
     let ident = |x: &server::db::Account| Identity { account: Some(x.id), wallet: Some(x.wallet.clone()), cosmetic: None };
     let summary = MatchSummary {
+        ranked: true,
         room: 1,
         started_tick: 0,
         ended_tick: 30 * 240,

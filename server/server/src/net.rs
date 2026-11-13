@@ -12,6 +12,7 @@ use protocol::{ClientMsg, ServerMsg};
 use serde_json::json;
 use tokio::sync::mpsc;
 
+use crate::lobby::JoinReq;
 use crate::room::Identity;
 use crate::sign::ArenaSigner;
 use crate::{db, SharedLobby};
@@ -62,9 +63,16 @@ async fn client(socket: WebSocket, state: AppState) {
     // The first message must be a Hello, within 15 seconds (generous: a slow phone may still be
     // busy compiling the renderer's shaders when the socket opens).
     let hello = tokio::time::timeout(Duration::from_secs(15), stream.next()).await;
-    let (mut name, token) = match hello {
+    let (mut name, token, req) = match hello {
         Ok(Some(Ok(Message::Text(t)))) => match ClientMsg::parse(t.as_str()) {
-            Some(ClientMsg::Hello { name, token }) => (clean_name(&name), token),
+            Some(ClientMsg::Hello { name, token, room, create }) => {
+                let req = match (create, room) {
+                    (Some(cfg), _) => JoinReq::Create(cfg),
+                    (None, Some(code)) if !code.trim().is_empty() => JoinReq::Code(code),
+                    _ => JoinReq::Quick,
+                };
+                (clean_name(&name), token, req)
+            }
             _ => return,
         },
         _ => return,
@@ -85,7 +93,7 @@ async fn client(socket: WebSocket, state: AppState) {
     }
 
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-    let joined = state.lobby.lock().unwrap().join(name, ident, tx.clone());
+    let joined = state.lobby.lock().unwrap().join_with(name, ident, tx.clone(), req);
     let (room_id, id) = match joined {
         Ok(v) => v,
         Err(e) => {
@@ -113,6 +121,11 @@ async fn client(socket: WebSocket, state: AppState) {
             Some(ClientMsg::Input { inputs }) => state.lobby.lock().unwrap().push_inputs(room_id, id, inputs),
             Some(ClientMsg::Ping { c }) => {
                 let _ = tx.send(ServerMsg::Pong { c }.to_json());
+            }
+            Some(m @ (ClientMsg::SetTeam { .. } | ClientMsg::Configure { .. } | ClientMsg::Start)) => {
+                if let Err(e) = state.lobby.lock().unwrap().room_cmd(room_id, id, m) {
+                    let _ = tx.send(ServerMsg::Error { msg: e }.to_json());
+                }
             }
             Some(ClientMsg::Hello { .. }) | None => {
                 bad += 1;

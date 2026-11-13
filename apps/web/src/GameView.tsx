@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
-import { client } from "./client";
+import { client, TEAM_COLORS, TEAM_NAMES, type JoinRequest } from "./client";
+import type { RoomConfig } from "./protocol";
 import { attachRenderer } from "./game/bridge";
 
 /**
@@ -7,7 +8,7 @@ import { attachRenderer } from "./game/bridge";
  * game by game/build.mjs) in a same-origin frame, plus a thin overlay for Arena-only things.
  * The renderer finishes booting before we join, so nobody spawns while their textures load.
  */
-export function GameView({ url, name, onLeave }: { url: string; name: string; onLeave: () => void }) {
+export function GameView({ url, name, join, onLeave }: { url: string; name: string; join: JoinRequest; onLeave: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false);
   // Renderer options pass straight through (?q=low|medium|high for quality, ?noaudio=1).
@@ -28,13 +29,14 @@ export function GameView({ url, name, onLeave }: { url: string; name: string; on
       detach = attachRenderer(w, client);
       setReady(true);
       try { f.focus(); } catch { /* */ }
-      void client.connect(url, name);
+      void client.connect(url, name, join);
     }, 100);
     return () => {
       window.clearInterval(iv);
       detach?.();
       client.disconnect();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, name]);
 
   return (
@@ -62,6 +64,19 @@ function useClient() {
 /** Arena-only overlay. Health, ammo, crosshair, hit markers and the kill feed are the original HUD. */
 function Overlay({ onLeave }: { onLeave: () => void }) {
   const c = useClient();
+  // Keep the room in the address bar, so the page itself is the invite link.
+  const code = c.room?.code;
+  useEffect(() => {
+    const u = new URL(location.href);
+    if (code) u.searchParams.set("room", code);
+    else u.searchParams.delete("room");
+    history.replaceState(null, "", u);
+    return () => {
+      const v = new URL(location.href);
+      v.searchParams.delete("room");
+      history.replaceState(null, "", v);
+    };
+  }, [code]);
   const now = performance.now();
   const banner = now - c.banner.t < 5000 ? c.banner.text : "";
   const result = c.result && now - c.result.t < 9000 ? c.result : null;
@@ -97,6 +112,8 @@ function Overlay({ onLeave }: { onLeave: () => void }) {
           <span>Rating {Math.round(result.me.stats.rating)}</span>
         </div>
       )}
+      {c.room && c.status === "playing" && !c.locked && <RoomPanel />}
+      {c.room && !c.room.live && c.locked && <div className="warmup-tag">Warm-up · Esc for the room panel</div>}
       {!c.locked && c.status === "playing" && (
         <div className="leave">
           <span>Tab · scoreboard</span>
@@ -109,13 +126,113 @@ function Overlay({ onLeave }: { onLeave: () => void }) {
           <table>
             <thead><tr><th>Breacher</th><th>K</th><th>D</th></tr></thead>
             <tbody>
-              {c.scoreboard().map((r) => (
-                <tr key={r.id} className={r.me ? "me" : ""}><td>{r.name}{r.bot ? <em className="bot">bot</em> : null}</td><td>{r.kills}</td><td>{r.deaths}</td></tr>
-              ))}
+              {c.scoreboard()
+                .sort((a, b) => (a.team ?? 0) - (b.team ?? 0))
+                .map((r) => (
+                  <tr key={r.id} className={r.me ? "me" : ""}>
+                    <td>
+                      {r.team != null && c.room?.config.teams && <i className="dot" style={{ background: TEAM_COLORS[r.team] }} />}
+                      {r.name}{r.bot ? <em className="bot">bot</em> : null}
+                    </td>
+                    <td>{r.kills}</td><td>{r.deaths}</td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Private room: code + invite, teams, and (for the host) settings and the Start button. */
+function RoomPanel() {
+  const c = client;
+  const room = c.room!;
+  const cfg = room.config;
+  const [copied, setCopied] = useState(false);
+  const host = c.isHost;
+  const warm = !room.live;
+  const set = (patch: Partial<RoomConfig>) => c.configure({ ...cfg, ...patch });
+  const people = [
+    { id: c.id, name: c.name, team: c.me.team, bot: false, me: true },
+    ...[...c.remotes.values()].map((r) => ({ id: r.id, name: r.name, team: r.team, bot: r.bot, me: false })),
+  ];
+  const hostName = people.find((p) => p.id === room.host)?.name ?? "the host";
+  const invite = () => {
+    const u = new URL(location.origin + location.pathname);
+    u.searchParams.set("room", room.code);
+    void navigator.clipboard?.writeText(u.toString()).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1600); });
+  };
+  const notice = performance.now() - c.notice.t < 5000 ? c.notice.text : "";
+  const row = (p: (typeof people)[number]) => (
+    <li key={p.id} className={p.me ? "me" : ""}>
+      {p.name}
+      {p.id === room.host && <em className="tagx">host</em>}
+      {p.bot && <em className="bot">bot</em>}
+    </li>
+  );
+  return (
+    <div className="room-panel">
+      <div className="rp-head">
+        <span className="k">Room</span>
+        <b className="code">{room.code}</b>
+        <button className="btn ghost sm" onClick={invite}>{copied ? "Link copied" : "Copy invite link"}</button>
+      </div>
+      <p className="rp-state">{warm ? "Warm-up · nobody can be hurt yet" : `Match live · ${cfg.teams ? "teams" : "free for all"} · first to ${cfg.kill_target}`}</p>
+
+      {cfg.teams ? (
+        <div className="rp-teams">
+          {[0, 1].map((t) => (
+            <div key={t} className="rp-team" style={{ borderTopColor: TEAM_COLORS[t] }}>
+              <div className="rp-team-h">
+                <b style={{ color: TEAM_COLORS[t] }}>{TEAM_NAMES[t]}</b>
+                <span>{people.filter((p) => p.team === t).length}{c.teamScores && room.live ? ` · ${c.teamScores[t]} kills` : ""}</span>
+              </div>
+              <ul>{people.filter((p) => p.team === t).map(row)}</ul>
+              {warm && c.me.team !== t && <button className="btn ghost sm" onClick={() => c.setTeam(t)}>Join {TEAM_NAMES[t]}</button>}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <ul className="rp-list">{people.map(row)}</ul>
+      )}
+
+      {host && warm && (
+        <div className="rp-settings">
+          <div className="seg">
+            <button aria-pressed={cfg.teams} onClick={() => set({ teams: true })}>Teams</button>
+            <button aria-pressed={!cfg.teams} onClick={() => set({ teams: false })}>Free for all</button>
+          </div>
+          {cfg.teams ? (
+            <label className="chk"><input type="checkbox" checked={cfg.balance_bots} onChange={(e) => set({ balance_bots: e.target.checked })} /> Fill the smaller team with bots when I start</label>
+          ) : (
+            <label className="sel">Bots joining on start
+              <select value={cfg.bots} onChange={(e) => set({ bots: +e.target.value })}>
+                {[0, 1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n === 0 ? "None" : n}</option>)}
+              </select>
+            </label>
+          )}
+          <label className="chk"><input type="checkbox" checked={cfg.replace_leavers} onChange={(e) => set({ replace_leavers: e.target.checked })} /> A bot takes over if someone leaves mid-match</label>
+          {cfg.teams && <label className="chk"><input type="checkbox" checked={cfg.friendly_fire} onChange={(e) => set({ friendly_fire: e.target.checked })} /> Friendly fire</label>}
+          <div className="sels">
+            <label className="sel">Kills to win
+              <select value={cfg.kill_target} onChange={(e) => set({ kill_target: +e.target.value })}>
+                {[10, 20, 30, 50, 75].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+            <label className="sel">Time limit
+              <select value={cfg.minutes} onChange={(e) => set({ minutes: +e.target.value })}>
+                {[5, 8, 12, 20].map((n) => <option key={n} value={n}>{n} min</option>)}
+              </select>
+            </label>
+          </div>
+          <button className="btn primary" onClick={() => c.startMatch()}>Start match</button>
+          <p className="hint">Uneven teams are fine. Bots only join if you switch them on above.</p>
+        </div>
+      )}
+      {!host && warm && <p className="hint">Waiting for {hostName} to start the match. Pick your team meanwhile.</p>}
+      {notice && <p className="err">{notice}</p>}
     </div>
   );
 }

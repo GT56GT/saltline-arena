@@ -39,6 +39,10 @@ pub fn placings(rows: &[(u32, u32)]) -> Vec<u32> {
 }
 
 pub async fn save(db: &SqlitePool, signer: &ArenaSigner, m: &MatchSummary) -> sqlx::Result<Option<Recorded>> {
+    // Private rooms (host-made, any teams or bots) are casual: no ratings, no records.
+    if !m.ranked {
+        return Ok(None);
+    }
     // Matches with no humans (bots alone) are not recorded.
     if m.players.iter().all(|p| p.7) {
         return Ok(None);

@@ -8,6 +8,50 @@ use serde::{Deserialize, Serialize};
 
 pub type PlayerId = u32;
 
+/// Settings for a private room. Only the host can change them, and only before the match starts.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RoomConfig {
+    /// Two teams (A = 0, B = 1) instead of everyone for themselves.
+    #[serde(default)]
+    pub teams: bool,
+    /// Free-for-all: how many bots join when the match starts (0 = none).
+    #[serde(default)]
+    pub bots: u8,
+    /// Teams: when the host starts, bots fill the smaller side until both are even.
+    #[serde(default)]
+    pub balance_bots: bool,
+    /// A bot takes over the slot of a player who leaves during the match.
+    #[serde(default)]
+    pub replace_leavers: bool,
+    /// Teammates can hurt each other.
+    #[serde(default)]
+    pub friendly_fire: bool,
+    #[serde(default = "default_kills")]
+    pub kill_target: u32,
+    #[serde(default = "default_minutes")]
+    pub minutes: u32,
+}
+fn default_kills() -> u32 {
+    30
+}
+fn default_minutes() -> u32 {
+    8
+}
+impl Default for RoomConfig {
+    fn default() -> Self {
+        Self { teams: true, bots: 0, balance_bots: false, replace_leavers: false, friendly_fire: false, kill_target: 30, minutes: 8 }
+    }
+}
+impl RoomConfig {
+    /// Keep host-chosen numbers in sane ranges.
+    pub fn clamped(mut self) -> Self {
+        self.bots = self.bots.min(7);
+        self.kill_target = self.kill_target.clamp(5, 100);
+        self.minutes = self.minutes.clamp(2, 30);
+        self
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ClientMsg {
@@ -17,7 +61,19 @@ pub enum ClientMsg {
         /// Session token from wallet sign-in; absent = guest.
         #[serde(default)]
         token: Option<String>,
+        /// Join a private room by its code.
+        #[serde(default)]
+        room: Option<String>,
+        /// Create a private room with these settings (the sender becomes its host).
+        #[serde(default)]
+        create: Option<RoomConfig>,
     },
+    /// Private rooms, before the match: move to team 0 or 1.
+    SetTeam { team: u8 },
+    /// Host only, before the match: change the room settings.
+    Configure { config: RoomConfig },
+    /// Host only: start the match (also restarts after one ends).
+    Start,
     /// One or more ticks of input, oldest first.
     Input { inputs: Vec<Input> },
     Ping { c: u64 },
@@ -41,6 +97,9 @@ pub struct PlayerSnap {
     /// Equipped cosmetic id (visual only).
     #[serde(default)]
     pub cosmetic: Option<String>,
+    /// Team (0 or 1) in a team room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<u8>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -50,14 +109,33 @@ pub enum ServerMsg {
     Welcome { id: PlayerId, tick: u32, tick_hz: u32, kill_target: u32, map: Map },
     /// Authoritative world state. `ack` = last input seq the server applied for this client
     /// (the client replays newer inputs on top of it for prediction).
-    Snapshot { tick: u32, ack: u32, ammo: u32, reloading: bool, players: Vec<PlayerSnap> },
+    Snapshot {
+        tick: u32,
+        ack: u32,
+        ammo: u32,
+        reloading: bool,
+        players: Vec<PlayerSnap>,
+        /// Team rooms: kills per team this match.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        team_scores: Option<[u32; 2]>,
+    },
+    /// Private room state: sent on join and whenever the host, phase, settings or teams change.
+    /// `live` = false is the warm-up before the host starts (nobody can be hurt).
+    Room { code: String, host: PlayerId, live: bool, config: RoomConfig },
     Shot { shooter: PlayerId, from: [f32; 3], to: [f32; 3] },
     Hit { shooter: PlayerId, target: PlayerId, damage: f32, head: bool },
     Kill { killer: PlayerId, victim: PlayerId, head: bool },
     Respawn { id: PlayerId },
     Joined { id: PlayerId, name: String },
     Left { id: PlayerId },
-    MatchEnd { winner: Option<PlayerId>, scores: Vec<(PlayerId, u32, u32)> },
+    MatchEnd {
+        winner: Option<PlayerId>,
+        scores: Vec<(PlayerId, u32, u32)>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        winner_team: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        team_scores: Option<[u32; 2]>,
+    },
     Pong { c: u64 },
     Error { msg: String },
 }

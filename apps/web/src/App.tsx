@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useState } from "react";
-import { client } from "./client";
+import { client, type JoinRequest } from "./client";
+import { DEFAULT_ROOM } from "./protocol";
 import { GameView } from "./GameView";
 import { api, hasWallet, httpBase, mintOnChain, serverUrl, session, shortAddr, signInWithWallet, type BoardRow, type ChainInfo, type Item, type Me } from "./api";
 
@@ -18,11 +19,11 @@ function useClient() {
 }
 
 export function App() {
-  const [play, setPlay] = useState<{ url: string; name: string } | null>(null);
+  const [play, setPlay] = useState<{ url: string; name: string; join: JoinRequest } | null>(null);
   return play ? (
-    <GameView url={play.url} name={play.name} onLeave={() => setPlay(null)} />
+    <GameView url={play.url} name={play.name} join={play.join} onLeave={() => setPlay(null)} />
   ) : (
-    <Lobby onDeploy={(url, name) => setPlay({ url, name })} />
+    <Lobby onDeploy={(url, name, join) => setPlay({ url, name, join })} />
   );
 }
 
@@ -30,7 +31,10 @@ export function App() {
 
 type Tab = "profile" | "leaderboard" | "cosmetics" | "how";
 
-function Lobby({ onDeploy }: { onDeploy: (url: string, name: string) => void }) {
+function Lobby({ onDeploy }: { onDeploy: (url: string, name: string, join: JoinRequest) => void }) {
+  // An invite link (?room=CODE) opens the lobby ready to join that room.
+  const invited = (new URLSearchParams(location.search).get("room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5);
+  const [code, setCode] = useState(invited);
   const c = useClient();
   const [me, setMe] = useState<Me | null>(null);
   const [tab, setTab] = useState<Tab>("leaderboard");
@@ -69,14 +73,15 @@ function Lobby({ onDeploy }: { onDeploy: (url: string, name: string) => void }) 
       setBusy("");
     }
   };
-  const deploy = () => {
+  const go = (join: JoinRequest) => {
     const name = (me?.account.callsign || guestName.trim() || "Breacher").slice(0, 16);
     try {
       localStorage.setItem("arena.name", guestName);
       localStorage.setItem("arena.server", server);
     } catch { /* private mode */ }
-    onDeploy(server, name);
+    onDeploy(server, name, join);
   };
+  const deploy = () => go({ kind: "quick" });
 
   return (
     <main className="lobby">
@@ -98,7 +103,25 @@ function Lobby({ onDeploy }: { onDeploy: (url: string, name: string) => void }) 
               <input id="name" maxLength={16} placeholder="Play as a guest" value={guestName} onChange={(e) => setGuestName(e.target.value)} />
             </>
           )}
-          <button className="btn primary" onClick={deploy}>Deploy</button>
+          {invited ? (
+            <button className="btn primary" onClick={() => go({ kind: "code", code: invited })}>Join room {invited}</button>
+          ) : (
+            <button className="btn primary" onClick={deploy}>Quick play</button>
+          )}
+          <div className="friends">
+            <span className="k">Play with friends</span>
+            <div className="row">
+              <button className="btn ghost" onClick={() => go({ kind: "create", config: DEFAULT_ROOM })}>Create room</button>
+              <input
+                aria-label="Room code" placeholder="Code" maxLength={5} value={code} spellCheck={false}
+                onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+                onKeyDown={(e) => { if (e.key === "Enter" && code.length === 5) go({ kind: "code", code }); }}
+              />
+              <button className="btn ghost" disabled={code.length !== 5} onClick={() => go({ kind: "code", code })}>Join</button>
+            </div>
+            <p className="hint">You host the room: pick teams, decide whether bots join, and start when everyone is in. Rooms are casual (no rating change).</p>
+          </div>
+          {invited && <button className="btn ghost" onClick={deploy}>Quick play instead</button>}
           {!me && (
             <button className="btn ghost" onClick={signIn} disabled={!!busy}>
               {busy ? "Waiting for wallet…" : hasWallet() ? "Sign in with wallet" : "Sign in with wallet (none found)"}

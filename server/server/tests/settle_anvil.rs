@@ -21,6 +21,7 @@ async fn signed_results_settle_on_anvil() {
         registry,
     ));
     let summary = MatchSummary {
+        ranked: true,
         room: 7,
         started_tick: 0,
         ended_tick: 30 * 60,

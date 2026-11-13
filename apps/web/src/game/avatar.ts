@@ -372,12 +372,14 @@ export class Avatar {
     this.tag.material.map.needsUpdate = true;
   }
 
-  setCosmetic(id: string | null, look: { slot: "visor" | "plates"; color: string } | null) {
-    if (id === this.cosmetic) return;
-    this.cosmetic = id;
+  setLook(id: string | null, look: { slot: "visor" | "plates"; color: string } | null, teamColor: string | null, ally: boolean) {
+    const key = `${id}|${teamColor}|${ally}`;
+    if (key === this.cosmetic) return;
+    this.cosmetic = key;
     this.visorMesh.material = this.kit.visor(look && look.slot === "visor" ? look.color : null);
-    const plate = this.kit.plates(look && look.slot === "plates" ? look.color : null);
+    const plate = this.kit.plates(teamColor || (look && look.slot === "plates" ? look.color : null));
     for (const m of this.platesMeshes) m.material = plate;
+    this.tag.material.depthTest = !ally;
   }
 
   /** World position of the rifle's muzzle (for tracers, flashes and sound). */

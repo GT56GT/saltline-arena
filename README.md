@@ -31,6 +31,7 @@ cd server && cargo test                  # rules, anti-cheat gate, lag compensat
 # browser vs scripted bot, through the original renderer (needs Playwright):
 cd server && PORT=8791 MIN_PLAYERS=0 SPAWN_RULE=nearest cargo run --bin arena-server
 cd apps/web && npm run build && npx vite preview --port 4173 & node e2e/play.cjs
+node e2e/room.cjs                        # host a private room, friend joins by code, 1 v 1 start
 node e2e/visual.cjs <dir>                # screenshots (server on 8790 with bots)
 ```
 
@@ -40,6 +41,18 @@ node e2e/visual.cjs <dir>                # screenshots (server on 8790 with bots
 - The browser runs the same `game-core` compiled to WebAssembly to predict its own movement instantly,
   then reconciles with each server snapshot. Other players are drawn 100 ms in the past, smoothly.
 - Rebuild the WASM after changing `game-core`: `cd apps/web && npm run wasm` (needs `wasm-pack`).
+
+## Playing with friends (private rooms)
+- **Create room** in the lobby: you are the host and get a 5-letter code; the address bar (`?room=CODE`)
+  is the invite link. Friends paste the code or open the link.
+- Before the match is a **warm-up**: everyone runs and shoots in the map, nobody can be hurt. Players
+  pick **Harbour** or **Rust**; the host picks teams or free-for-all, kills to win and the time limit.
+- **Bots join only if the host turns them on**: "fill the smaller team with bots when I start"
+  (teams), a bot count (free-for-all), and "a bot takes over if someone leaves". Uneven teams such as
+  1 v 2 are allowed; a team must not be empty. Friendly fire is off unless the host enables it.
+- Only the host can change settings or start; if the host leaves, the next player takes over. After a
+  match the room returns to warm-up for a rematch. Private rooms are casual: no rating change.
+- Quick play is the public, ranked free-for-all with automatic bots.
 
 ## What you see in a match
 - `apps/web/game/saltline.min.js` is the original Saltline game, unmodified. `game/build.mjs` (runs before
