@@ -14,6 +14,7 @@ import { COSMETICS } from "../cosmetics";
 import { Avatar, makeKit, type Kit } from "./avatar";
 import { Operator, loadOperatorKit, type OperatorKit } from "./operator";
 import { getSettings, onSettings, type Settings } from "../settings";
+import { Footsteps } from "./footsteps";
 
 const RESERVE = 90;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -96,7 +97,10 @@ export function attachRenderer(win: any, client: GameClient): () => void {
         try { G.fx.tracer(from.clone(), to.clone(), { color: 16756832, speed: 140 }); } catch { /* fx optional */ }
         try { G.fx.muzzleFlash(from.clone(), dir.clone(), { scale: 0.85 }); } catch { /* */ }
         try { G.render.lightPool && G.render.lightPool.flash(from.clone(), 16756832, 40, 8, 0.05); } catch { /* */ }
-        try { G.audio.play("rifle_shot", { pos: from.clone(), variant: (Math.random() * 4) | 0, gain: 0.95, jitter: 0.02 }); } catch { /* */ }
+        // Other players' shots: in 3D (direction, height, distance), heard across the map up to 150 m.
+        if (from.distanceTo(G.camera.position) < 150) {
+          try { G.audio.play("rifle_shot", { pos: from.clone(), world: true, hrtf: true, ref: 6, roll: 0.6, variant: (Math.random() * 4) | 0, gain: 0.95, jitter: 0.02 }); } catch { /* */ }
+        }
         // Where it struck the world: sparks, decal, impact sound, and a whiz if it passed close by.
         try {
           const hit = G.physics.raycast(from, dir, len + 0.25);
@@ -202,24 +206,14 @@ export function attachRenderer(win: any, client: GameClient): () => void {
     return { onGround: client.predictedOnGround() };
   };
 
-  // Footsteps of other players, from where they are, on what they walk on.
-  const STEP: Record<string, string> = { metal: "step_metal", water: "step_water" };
-  const footstep = (a: Avatar | Operator) => {
-    const pose = a.pose;
-    if (!pose || !pose.alive || pose.climb) return;
-    const sp = a.groundSpeed;
-    if (sp < 0.8) return;
-    const [x, y, z] = pose.pos;
-    let surface = "concrete";
-    try {
-      surface = G.level && G.level.groundSurfaceAt ? G.level.groundSurfaceAt(x, z) || "concrete" : "concrete";
-      if (G.ground && G.ground.isPuddle && G.ground.isPuddle(x, z)) surface = "water";
-    } catch { /* */ }
-    // Sprinting is loud, walking is clear, crouch-walking is nearly silent.
-    const gain = pose.crouch ? 0.18 : sp > 5 ? 1.0 : 0.62;
-    try {
-      G.audio.play(STEP[surface] || "step_concrete", { pos: new T.Vector3(x, y + 0.05, z), gain, pitch: sp > 5 ? 1.05 : 1, jitter: 0.08 });
-    } catch { /* */ }
+  // Other players' footsteps, jumps, landings and climbs: in 3D, by hearing distance, enemies first.
+  const steps = new Footsteps(G);
+  const climbHeard = new Map<number, boolean>();
+  /** Is this remote player looking roughly at us (within ~45 degrees)? Their steps take priority. */
+  const facingUs = (pose: { pos: V3; yaw: number }) => {
+    const dx = camPos.x - pose.pos[0], dz = camPos.z - pose.pos[2];
+    const d = Math.hypot(dx, dz) || 1;
+    return (-Math.sin(pose.yaw) * dx - Math.cos(pose.yaw) * dz) / d > 0.7;
   };
   const stepsHeard = new Map<number, number>();
 
@@ -318,13 +312,19 @@ export function attachRenderer(win: any, client: GameClient): () => void {
       const ally = teams && r.team != null && r.team === client.me.team;
       a.tagWanted = ally || st.names === "always" || r.id === aimedId;
       const pose = client.remotePose(r, now);
-      if (pose) a.update(pose, dt, camPos);
-      if (a.steps !== stepsHeard.get(r.id)) {
-        if (stepsHeard.has(r.id)) footstep(a);
-        stepsHeard.set(r.id, a.steps);
+      if (pose) {
+        a.update(pose, dt, camPos);
+        const facing = facingUs(pose);
+        const climbStarted = pose.climb && climbHeard.get(r.id) === false;
+        climbHeard.set(r.id, pose.climb);
+        steps.track(r.id, pose, climbStarted, camPos, ally, facing);
+        if (a.steps !== stepsHeard.get(r.id)) {
+          if (stepsHeard.has(r.id)) steps.step(r.id, pose, a.groundSpeed, camPos, ally, facing);
+          stepsHeard.set(r.id, a.steps);
+        }
       }
     }
-    for (const [id, a] of avatars) if (!seen.has(id)) { a.dispose(); avatars.delete(id); stepsHeard.delete(id); }
+    for (const [id, a] of avatars) if (!seen.has(id)) { a.dispose(); avatars.delete(id); stepsHeard.delete(id); climbHeard.delete(id); steps.forget(id); }
 
     // Match panel (the original objective slot).
     let leader = { name: "", kills: -1 };
@@ -351,7 +351,7 @@ export function attachRenderer(win: any, client: GameClient): () => void {
   };
 
   // For tests and screenshots: build or inspect operator models directly.
-  win.__arena = { kit, Avatar, Operator, avatars, get opKit() { return opKit; } };
+  win.__arena = { kit, Avatar, Operator, avatars, steps, get opKit() { return opKit; } };
 
   // Overlay keys (scoreboard) and audio unlock happen inside the iframe.
   const keydown = (ev: KeyboardEvent) => {

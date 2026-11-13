@@ -48,6 +48,30 @@ const PATCHES = [
     "window.__G=t;",
     "window.__G=t;t.QUALITY=Pr;",
   ],
+  // Other players' footsteps and shots: the game files its step and rifle sounds on the "near"
+  // (first-person) channel, which plays centred with no distance. These let Arena send any sound
+  // through the 3D voices (`world`), with head-related panning (`hrtf`), a per-voice low-pass
+  // filter (`lp`, Hz) and its own voice cap and priority (`max`, `pri`).
+  [
+    "audio: a low-pass filter on every 3D voice",
+    "he?(pe.pan=F(!1),pe.g.connect(pe.pan),pe.pan.connect(H[te])):pe.g.connect(H[te])",
+    'he?(pe.pan=F(!1),pe.lp=e.createBiquadFilter(),pe.lp.type="lowpass",pe.lp.frequency.value=22e3,pe.g.connect(pe.lp),pe.lp.connect(pe.pan),pe.pan.connect(H[te])):pe.g.connect(H[te])',
+  ],
+  [
+    "audio: play any sound in 3D on request",
+    'Ue=!!ke&&pe.bus==="world",',
+    'Ue=!!ke&&(pe.bus==="world"||!!he.world),',
+  ],
+  [
+    "audio: per-play voice cap and priority",
+    "De=Fe(ct,te,pe,Le);",
+    "De=Fe(ct,te,he.max||he.pri?Object.assign({},pe,he.max?{max:he.max}:{},he.pri?{pri:he.pri}:{}):pe,Le);",
+  ],
+  [
+    "audio: per-play HRTF and low-pass",
+    "ie(De.pan,Ht.x||0,Ht.y||0,Ht.z||0),",
+    'ie(De.pan,Ht.x||0,Ht.y||0,Ht.z||0),De.pan.panningModel=he.hrtf?"HRTF":"equalpower",De.lp&&(De.lp.frequency.cancelScheduledValues(Le),De.lp.frequency.setValueAtTime(he.lp||22e3,Le)),',
+  ],
   [
     "player: Arena can restart the death camera",
     "update:N};",

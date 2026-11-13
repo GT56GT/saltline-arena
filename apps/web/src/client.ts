@@ -13,7 +13,7 @@ export const INTERP_MS = 100;
 
 let wasmReady: Promise<unknown> | null = null;
 
-interface Pose { t: number; pos: V3; yaw: number; pitch: number; crouch: boolean; alive: boolean; climb: boolean }
+interface Pose { t: number; pos: V3; yaw: number; pitch: number; crouch: boolean; alive: boolean; climb: boolean; /** Vertical speed, m/s (0 on the ground). */ vy: number }
 export interface Remote { id: PlayerId; name: string; buf: Pose[]; hp: number; alive: boolean; kills: number; deaths: number; firedAt: number; bot: boolean; cosmetic: string | null; team: number | null }
 /** How to enter: public matchmaking, a new private room (we host), or a room code. */
 export type JoinRequest = { kind: "quick" } | { kind: "create"; config: RoomConfig } | { kind: "code"; code: string };
@@ -375,7 +375,7 @@ export class GameClient {
       r = { id: s.id, name: s.name, buf: [], hp: 100, alive: true, kills: 0, deaths: 0, firedAt: 0, bot: !!s.bot, cosmetic: s.cosmetic ?? null, team: s.team ?? null };
       this.remotes.set(s.id, r);
     }
-    r.buf.push({ t: now, pos: s.pos, yaw: s.yaw, pitch: s.pitch, crouch: s.crouch, alive: s.alive, climb: !!s.mantle });
+    r.buf.push({ t: now, pos: s.pos, yaw: s.yaw, pitch: s.pitch, crouch: s.crouch, alive: s.alive, climb: !!s.mantle, vy: s.vel ? s.vel[1] : 0 });
     if (r.buf.length > 20) r.buf.shift();
     Object.assign(r, { hp: s.hp, alive: s.alive, kills: s.kills, deaths: s.deaths, name: s.name, bot: !!s.bot, cosmetic: s.cosmetic ?? null, team: s.team ?? null });
   }
@@ -400,6 +400,7 @@ export class GameClient {
       crouch: B.crouch,
       alive: B.alive,
       climb: B.climb || A.climb,
+      vy: A.vy + (B.vy - A.vy) * k,
     };
   }
 
