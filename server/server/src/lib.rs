@@ -3,6 +3,7 @@
 //! - `room`  — one authoritative match (simulation, hit validation, lag compensation)
 //! - `bot`   — server-side bots that play through the same input path as humans
 //! - `lobby` — matchmaker: rooms of 8, bot top-up, room lifecycle
+//! - `sight` — fog of war: who may know where an opponent is
 //! - `net`   — HTTP + WebSocket endpoints
 
 pub mod api;
@@ -16,6 +17,7 @@ pub mod rating;
 pub mod records;
 pub mod room;
 pub mod settle;
+pub mod sight;
 pub mod sign;
 
 use std::sync::{Arc, Mutex};
@@ -51,7 +53,9 @@ pub fn spawn_recorder(state: AppState) {
             let done: Vec<_> = std::mem::take(&mut state.lobby.lock().unwrap().finished);
             for m in done {
                 match records::save(&state.db, &state.signer, &m).await {
-                    Ok(Some(r)) => tracing::info!("recorded match {} ({} rated)", r.match_id, r.deltas.len()),
+                    Ok(Some(r)) => {
+                        tracing::info!("recorded match {} ({} rated)", r.match_id, r.deltas.len())
+                    }
                     Ok(None) => {}
                     Err(e) => tracing::error!("recording match failed: {e}"),
                 }
@@ -70,7 +74,11 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) {
 /// A complete in-memory server state (fresh database, throwaway signer). For tests and local tools.
 pub async fn test_state(min_players: usize) -> AppState {
     let db = db::connect("sqlite::memory:").await.expect("in-memory db");
-    let signer = Arc::new(sign::ArenaSigner::new("", 84532, alloy_primitives::Address::repeat_byte(0x42)));
+    let signer = Arc::new(sign::ArenaSigner::new(
+        "",
+        84532,
+        alloy_primitives::Address::repeat_byte(0x42),
+    ));
     AppState {
         lobby: Arc::new(Mutex::new(Lobby::new(game_core::Map::yard, min_players))),
         db,

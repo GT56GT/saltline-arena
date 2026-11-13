@@ -11,7 +11,18 @@ use tokio::sync::mpsc;
 use crate::room::{Identity, MatchSummary, Room, MAX_PLAYERS};
 
 const BOT_NAMES: [&str; 12] = [
-    "Gull-07", "Hound-12", "Rivet", "Ballast", "Bollard", "Tidewater", "Kestrel", "Gantry", "Spindle", "Lantern", "Ferrous", "Pilot-3",
+    "Gull-07",
+    "Hound-12",
+    "Rivet",
+    "Ballast",
+    "Bollard",
+    "Tidewater",
+    "Kestrel",
+    "Gantry",
+    "Spindle",
+    "Lantern",
+    "Ferrous",
+    "Pilot-3",
 ];
 
 /// How a connection wants to play.
@@ -31,7 +42,12 @@ fn fresh_code(taken: impl Fn(&str) -> bool) -> String {
     use std::hash::{BuildHasher, Hasher};
     loop {
         let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-        h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+        h.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        );
         let mut x = h.finish();
         let code: String = (0..5)
             .map(|_| {
@@ -58,6 +74,8 @@ pub struct Lobby {
     pub kill_target: u32,
     pub match_ticks: u32,
     pub spawn_near: bool,
+    /// Fog of war in new rooms (FOG=0 turns it off).
+    pub fog: bool,
 }
 
 impl Lobby {
@@ -72,17 +90,29 @@ impl Lobby {
             kill_target: crate::room::KILL_TARGET,
             match_ticks: crate::room::MATCH_TICKS,
             spawn_near: false,
+            fog: true,
         }
     }
 
     /// Place a player in public matchmaking (see `join_with`).
-    pub fn join(&mut self, name: String, ident: Identity, tx: mpsc::UnboundedSender<String>) -> Result<(u64, PlayerId), String> {
+    pub fn join(
+        &mut self,
+        name: String,
+        ident: Identity,
+        tx: mpsc::UnboundedSender<String>,
+    ) -> Result<(u64, PlayerId), String> {
         self.join_with(name, ident, tx, JoinReq::Quick)
     }
 
     /// Place a player: public matchmaking picks the busiest public room with a free slot (or opens
     /// one); `Create` opens a private room with a fresh code; `Code` joins that private room.
-    pub fn join_with(&mut self, name: String, ident: Identity, tx: mpsc::UnboundedSender<String>, req: JoinReq) -> Result<(u64, PlayerId), String> {
+    pub fn join_with(
+        &mut self,
+        name: String,
+        ident: Identity,
+        tx: mpsc::UnboundedSender<String>,
+        req: JoinReq,
+    ) -> Result<(u64, PlayerId), String> {
         let room_id = match req {
             JoinReq::Quick => self
                 .rooms
@@ -97,6 +127,7 @@ impl Lobby {
                     room.kill_target = self.kill_target;
                     room.match_ticks = self.match_ticks;
                     room.spawn_near = self.spawn_near;
+                    room.fog = self.fog;
                     self.rooms.insert(id, room);
                     id
                 }),
@@ -106,12 +137,17 @@ impl Lobby {
                 let code = fresh_code(|c| self.rooms.values().any(|r| r.code() == Some(c)));
                 let mut room = Room::new_custom(id, (self.map)(), code, config);
                 room.spawn_near = self.spawn_near;
+                room.fog = self.fog;
                 self.rooms.insert(id, room);
                 id
             }
             JoinReq::Code(code) => {
                 let code = code.trim().to_uppercase();
-                let Some((id, r)) = self.rooms.iter().find(|(_, r)| r.code() == Some(code.as_str())) else {
+                let Some((id, r)) = self
+                    .rooms
+                    .iter()
+                    .find(|(_, r)| r.code() == Some(code.as_str()))
+                else {
                     return Err(format!("no room with code {code}"));
                 };
                 if r.humans() >= MAX_PLAYERS {
@@ -126,8 +162,15 @@ impl Lobby {
     }
 
     /// Private-room commands from a player (team pick, host settings, host start).
-    pub fn room_cmd(&mut self, room_id: u64, pid: PlayerId, msg: protocol::ClientMsg) -> Result<(), String> {
-        let Some(room) = self.rooms.get_mut(&room_id) else { return Err("no room".into()) };
+    pub fn room_cmd(
+        &mut self,
+        room_id: u64,
+        pid: PlayerId,
+        msg: protocol::ClientMsg,
+    ) -> Result<(), String> {
+        let Some(room) = self.rooms.get_mut(&room_id) else {
+            return Err("no room".into());
+        };
         if room.custom.is_none() {
             return Err("this is a public match".into());
         }

@@ -14,7 +14,7 @@ export const INTERP_MS = 100;
 let wasmReady: Promise<unknown> | null = null;
 
 interface Pose { t: number; pos: V3; yaw: number; pitch: number; crouch: boolean; alive: boolean; climb: boolean; /** Vertical speed, m/s (0 on the ground). */ vy: number }
-export interface Remote { id: PlayerId; name: string; buf: Pose[]; hp: number; alive: boolean; kills: number; deaths: number; firedAt: number; bot: boolean; cosmetic: string | null; team: number | null }
+export interface Remote { id: PlayerId; name: string; buf: Pose[]; hp: number; alive: boolean; kills: number; deaths: number; firedAt: number; bot: boolean; cosmetic: string | null; team: number | null; /** Fog of war: the server is not telling us where they are. */ hidden: boolean }
 /** How to enter: public matchmaking, a new private room (we host), or a room code. */
 export type JoinRequest = { kind: "quick" } | { kind: "create"; config: RoomConfig } | { kind: "code"; code: string };
 export const TEAM_NAMES = ["Harbour", "Rust"] as const;
@@ -372,8 +372,20 @@ export class GameClient {
   private applyRemote(s: PlayerSnap, now: number) {
     let r = this.remotes.get(s.id);
     if (!r) {
-      r = { id: s.id, name: s.name, buf: [], hp: 100, alive: true, kills: 0, deaths: 0, firedAt: 0, bot: !!s.bot, cosmetic: s.cosmetic ?? null, team: s.team ?? null };
+      r = { id: s.id, name: s.name, buf: [], hp: 100, alive: true, kills: 0, deaths: 0, firedAt: 0, bot: !!s.bot, cosmetic: s.cosmetic ?? null, team: s.team ?? null, hidden: false };
       this.remotes.set(s.id, r);
+    }
+    // Fog of war: a hidden opponent keeps their scoreboard row but has no position. When they come
+    // back, start a fresh buffer so they don't slide in from where they were last seen.
+    if (s.hidden) {
+      r.hidden = true;
+      r.buf.length = 0;
+      Object.assign(r, { alive: s.alive, kills: s.kills, deaths: s.deaths, name: s.name, bot: !!s.bot, cosmetic: s.cosmetic ?? null, team: s.team ?? null });
+      return;
+    }
+    if (r.hidden) {
+      r.hidden = false;
+      r.buf.length = 0;
     }
     r.buf.push({ t: now, pos: s.pos, yaw: s.yaw, pitch: s.pitch, crouch: s.crouch, alive: s.alive, climb: !!s.mantle, vy: s.vel ? s.vel[1] : 0 });
     if (r.buf.length > 20) r.buf.shift();

@@ -34,7 +34,9 @@ function friend(code) {
   await page.waitForFunction(() => window.arena && arena.status === "playing" && arena.room && arena.hasSelf, null, { timeout: 150000 });
   const room = await page.evaluate(() => arena.room);
   ok("browser created a private room and hosts it", room.host === (await page.evaluate(() => arena.id)), `code ${room.code}, live ${room.live}`);
-  ok("address bar is the invite link", (await page.evaluate(() => location.search)).includes(`room=${room.code}`));
+  // The room code goes into the address bar once the match view mounts (after the matchmaking card).
+  await page.waitForFunction((c) => location.search.includes(`room=${c}`), room.code, { timeout: 60000 }).catch(() => {});
+  ok("address bar is the invite link", (await page.evaluate(() => location.search)).includes(`room=${room.code}`), await page.evaluate(() => location.search));
 
   const f = friend(room.code);
   await page.waitForFunction(() => arena.remotes.size === 1, null, { timeout: 30000, polling: 250 });

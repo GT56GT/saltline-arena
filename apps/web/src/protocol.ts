@@ -15,6 +15,8 @@ export interface PlayerSnap {
   bot?: boolean; cosmetic?: string | null; team?: number;
   /** Climbing: [from x y z, to x y z, seconds in, total seconds]. */
   mantle?: number[];
+  /** Fog of war: out of your sight and earshot. Only id, name, team, kills, deaths and alive are real. */
+  hidden?: boolean;
 }
 
 /** Private room settings (host only, before the match). Mirrors protocol::RoomConfig. */

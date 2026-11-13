@@ -6,9 +6,13 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use game_core::{look_dir, map::Spawn, ray_vs_player, step_player, Input, Map, PlayerState, RIFLE, TICK_HZ};
+use crate::sight::{self, SightGrid};
+use game_core::{
+    look_dir, map::Spawn, ray_vs_player, step_player, Input, Map, PlayerState, RIFLE, TICK_HZ,
+};
 use glam::Vec3;
 use protocol::{PlayerId, PlayerSnap, RoomConfig, ServerMsg};
+use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 use crate::bot::Brain;
@@ -51,6 +55,10 @@ pub struct Player {
     pub team: Option<u8>,
     /// Tick of the last damage taken (health regenerates after a quiet spell).
     hurt_at: u32,
+    /// Tick of the last shot fired (a shot is heard across the map for a moment).
+    fired_at: Option<u32>,
+    /// Fog of war: opponents this player may know about, and until which tick.
+    seen: HashMap<PlayerId, u32>,
 }
 
 impl Player {
@@ -87,7 +95,18 @@ pub const REGEN_DELAY_TICKS: u32 = 4 * TICK_HZ;
 pub const REGEN_PER_SEC: f32 = 25.0;
 
 pub const BOT_NAMES: [&str; 12] = [
-    "Bollard", "Tidewater", "Ballast", "Kestrel", "Spindle", "Hawser", "Gantry", "Rivet", "Cleat", "Dredge", "Marlin", "Sounder",
+    "Bollard",
+    "Tidewater",
+    "Ballast",
+    "Kestrel",
+    "Spindle",
+    "Hawser",
+    "Gantry",
+    "Rivet",
+    "Cleat",
+    "Dredge",
+    "Marlin",
+    "Sounder",
 ];
 
 pub struct Room {
@@ -105,6 +124,9 @@ pub struct Room {
     pub match_ticks: u32,
     /// Spawn next to the action instead of away from it (practice rooms and browser tests).
     pub spawn_near: bool,
+    /// Fog of war: send opponents' positions only to players who can see or hear them.
+    pub fog: bool,
+    sight: SightGrid,
     /// Present for private rooms only.
     pub custom: Option<Custom>,
     bot_counter: usize,
@@ -115,6 +137,8 @@ impl Room {
     pub fn new(id: u64, map: Map) -> Self {
         Self {
             id,
+            sight: SightGrid::new(&map),
+            fog: true,
             map,
             tick: 0,
             match_start: 0,
@@ -138,7 +162,13 @@ impl Room {
         let mut r = Self::new(id, map);
         r.kill_target = config.kill_target;
         r.match_ticks = config.minutes * 60 * TICK_HZ;
-        r.custom = Some(Custom { code, host: 0, config, live: false, team_kills: [0, 0] });
+        r.custom = Some(Custom {
+            code,
+            host: 0,
+            config,
+            live: false,
+            team_kills: [0, 0],
+        });
         r
     }
 
@@ -153,10 +183,17 @@ impl Room {
         self.custom.as_ref().is_some_and(|c| !c.live)
     }
     pub fn team_size(&self, team: u8) -> usize {
-        self.players.values().filter(|p| p.team == Some(team)).count()
+        self.players
+            .values()
+            .filter(|p| p.team == Some(team))
+            .count()
     }
     fn smaller_team(&self) -> u8 {
-        if self.team_size(1) < self.team_size(0) { 1 } else { 0 }
+        if self.team_size(1) < self.team_size(0) {
+            1
+        } else {
+            0
+        }
     }
     fn next_bot_name(&mut self) -> String {
         let used: Vec<String> = self.players.values().map(|p| p.name.clone()).collect();
@@ -173,7 +210,12 @@ impl Room {
     /// Tell everyone the private room's state (host, warm-up/live, settings).
     pub fn broadcast_room(&self) {
         if let Some(c) = &self.custom {
-            self.broadcast(&ServerMsg::Room { code: c.code.clone(), host: c.host, live: c.live, config: c.config.clone() });
+            self.broadcast(&ServerMsg::Room {
+                code: c.code.clone(),
+                host: c.host,
+                live: c.live,
+                config: c.config.clone(),
+            });
         }
     }
 
@@ -234,12 +276,17 @@ impl Room {
                 while self.team_size(0) != self.team_size(1) && !self.is_full() {
                     let t = self.smaller_team();
                     let name = self.next_bot_name();
-                    let Some(bid) = self.add_bot(name, 0.55) else { break };
+                    let Some(bid) = self.add_bot(name, 0.55) else {
+                        break;
+                    };
                     self.players.get_mut(&bid).unwrap().team = Some(t);
                 }
             }
             if self.team_size(0) == 0 || self.team_size(1) == 0 {
-                return Err("each team needs at least one player (or turn on bots to fill the empty side)".into());
+                return Err(
+                    "each team needs at least one player (or turn on bots to fill the empty side)"
+                        .into(),
+                );
             }
         } else {
             for _ in 0..cfg.bots {
@@ -295,13 +342,25 @@ impl Room {
     /// randomness among the best.
     fn pick_spawn_for(&mut self, team: Option<u8>) -> Spawn {
         // In a team room, only the other team counts as danger.
-        let enemies: Vec<Vec3> =
-            self.players.values().filter(|p| p.state.alive && (team.is_none() || p.team != team)).map(|p| p.state.pos).collect();
+        let enemies: Vec<Vec3> = self
+            .players
+            .values()
+            .filter(|p| p.state.alive && (team.is_none() || p.team != team))
+            .map(|p| p.state.pos)
+            .collect();
         let mut scored: Vec<(f32, Spawn)> = self
             .map
             .spawns
             .iter()
-            .map(|s| (enemies.iter().map(|e| e.distance(s.pos)).fold(60.0, f32::min), s.clone()))
+            .map(|s| {
+                (
+                    enemies
+                        .iter()
+                        .map(|e| e.distance(s.pos))
+                        .fold(60.0, f32::min),
+                    s.clone(),
+                )
+            })
             .collect();
         if self.spawn_near && !enemies.is_empty() {
             // Closest spawn that is not on top of someone (practice / tests).
@@ -310,28 +369,50 @@ impl Room {
             if let Some((_, s)) = scored.first() {
                 return s.clone();
             }
-            return Spawn { pos: Vec3::ZERO, yaw: 0.0 };
+            return Spawn {
+                pos: Vec3::ZERO,
+                yaw: 0.0,
+            };
         }
         scored.sort_by(|a, b| b.0.total_cmp(&a.0));
         if scored.is_empty() {
-            return Spawn { pos: Vec3::ZERO, yaw: 0.0 };
+            return Spawn {
+                pos: Vec3::ZERO,
+                yaw: 0.0,
+            };
         }
         let top = scored.len().min(2);
         let i = ((self.rand() * top as f32) as usize).min(top - 1);
         scored.swap_remove(i).1
     }
 
-    fn insert(&mut self, name: String, ident: Identity, tx: Option<mpsc::UnboundedSender<String>>, brain: Option<Brain>) -> PlayerId {
+    fn insert(
+        &mut self,
+        name: String,
+        ident: Identity,
+        tx: Option<mpsc::UnboundedSender<String>>,
+        brain: Option<Brain>,
+    ) -> PlayerId {
         let id = self.next_id;
         self.next_id += 1;
         let team = self.teams_on().then(|| self.smaller_team());
         let sp = self.pick_spawn_for(team);
         if let Some(tx) = &tx {
             let _ = tx.send(
-                ServerMsg::Welcome { id, tick: self.tick, tick_hz: TICK_HZ, kill_target: self.kill_target, map: self.map.clone() }.to_json(),
+                ServerMsg::Welcome {
+                    id,
+                    tick: self.tick,
+                    tick_hz: TICK_HZ,
+                    kill_target: self.kill_target,
+                    map: self.map.clone(),
+                }
+                .to_json(),
             );
         }
-        self.broadcast(&ServerMsg::Joined { id, name: name.clone() });
+        self.broadcast(&ServerMsg::Joined {
+            id,
+            name: name.clone(),
+        });
         self.players.insert(
             id,
             Player {
@@ -341,7 +422,10 @@ impl Room {
                 queue: VecDeque::new(),
                 last_seq: 0,
                 applied_seq: 0,
-                last_input: Input { yaw: sp.yaw, ..Default::default() },
+                last_input: Input {
+                    yaw: sp.yaw,
+                    ..Default::default()
+                },
                 kills: 0,
                 deaths: 0,
                 headshots: 0,
@@ -352,6 +436,8 @@ impl Room {
                 brain,
                 team,
                 hurt_at: 0,
+                fired_at: None,
+                seen: HashMap::new(),
             },
         );
         if let Some(c) = self.custom.as_mut() {
@@ -363,11 +449,20 @@ impl Room {
         id
     }
 
-    pub fn join(&mut self, name: String, tx: mpsc::UnboundedSender<String>) -> Result<PlayerId, String> {
+    pub fn join(
+        &mut self,
+        name: String,
+        tx: mpsc::UnboundedSender<String>,
+    ) -> Result<PlayerId, String> {
         self.join_as(name, Identity::default(), tx)
     }
 
-    pub fn join_as(&mut self, name: String, ident: Identity, tx: mpsc::UnboundedSender<String>) -> Result<PlayerId, String> {
+    pub fn join_as(
+        &mut self,
+        name: String,
+        ident: Identity,
+        tx: mpsc::UnboundedSender<String>,
+    ) -> Result<PlayerId, String> {
         if self.is_full() && !self.remove_one_bot() {
             return Err("room full".into());
         }
@@ -379,17 +474,31 @@ impl Room {
             return None;
         }
         let seed = (self.rand() * 1e6) as u64;
-        Some(self.insert(name, Identity::default(), None, Some(Brain::new(skill, seed))))
+        Some(self.insert(
+            name,
+            Identity::default(),
+            None,
+            Some(Brain::new(skill, seed)),
+        ))
     }
 
     pub fn remove_one_bot(&mut self) -> bool {
-        let Some(id) = self.players.iter().find(|(_, p)| p.is_bot()).map(|(id, _)| *id) else { return false };
+        let Some(id) = self
+            .players
+            .iter()
+            .find(|(_, p)| p.is_bot())
+            .map(|(id, _)| *id)
+        else {
+            return false;
+        };
         self.leave(id);
         true
     }
 
     pub fn leave(&mut self, id: PlayerId) {
-        let Some(gone) = self.players.remove(&id) else { return };
+        let Some(gone) = self.players.remove(&id) else {
+            return;
+        };
         self.broadcast(&ServerMsg::Left { id });
         let Some(c) = self.custom.clone() else { return };
         // A human leaving a live match: a bot takes the slot if the host asked for that.
@@ -401,7 +510,12 @@ impl Room {
         }
         // The host left: the longest-standing human takes over.
         if c.host == id {
-            let next = self.players.iter().find(|(_, p)| !p.is_bot()).map(|(pid, _)| *pid).unwrap_or(0);
+            let next = self
+                .players
+                .iter()
+                .find(|(_, p)| !p.is_bot())
+                .map(|(pid, _)| *pid)
+                .unwrap_or(0);
             self.custom.as_mut().unwrap().host = next;
         }
         self.broadcast_room();
@@ -410,7 +524,9 @@ impl Room {
     /// Queue inputs from a client. Only strictly newer sequence numbers are accepted, and the
     /// queue is capped, so replaying or flooding inputs cannot make a player act more often.
     pub fn push_inputs(&mut self, id: PlayerId, inputs: Vec<Input>) {
-        let Some(p) = self.players.get_mut(&id) else { return };
+        let Some(p) = self.players.get_mut(&id) else {
+            return;
+        };
         for inp in inputs.into_iter().take(MAX_QUEUED_INPUTS) {
             if inp.seq <= p.last_seq {
                 continue;
@@ -438,7 +554,11 @@ impl Room {
         let mut events: Vec<ServerMsg> = Vec::new();
 
         // 0. Bots decide their input from what they can see (same rules, same input path as humans).
-        let world: Vec<(PlayerId, PlayerState, Option<u8>)> = self.players.iter().map(|(id, p)| (*id, p.state, p.team)).collect();
+        let world: Vec<(PlayerId, PlayerState, Option<u8>)> = self
+            .players
+            .iter()
+            .map(|(id, p)| (*id, p.state, p.team))
+            .collect();
         let teams_on = self.teams_on();
         for id in &ids {
             let p = self.players.get_mut(id).unwrap();
@@ -467,7 +587,12 @@ impl Room {
                     p.applied_seq = i.seq;
                     i
                 }
-                None => Input { fire: false, jump: false, reload: false, ..p.last_input },
+                None => Input {
+                    fire: false,
+                    jump: false,
+                    reload: false,
+                    ..p.last_input
+                },
             };
             p.last_input = inp;
             step_player(&mut p.state, &inp, map);
@@ -479,7 +604,8 @@ impl Room {
         // 2. Shots, judged on the server with lag compensation.
         for (shooter, inp) in fired {
             let s = self.players[&shooter].state;
-            if !s.alive || s.fire_cd > 1e-4 || s.reload_t > 0.0 || s.ammo == 0 || s.mantle.is_some() {
+            if !s.alive || s.fire_cd > 1e-4 || s.reload_t > 0.0 || s.ammo == 0 || s.mantle.is_some()
+            {
                 continue;
             }
             {
@@ -492,8 +618,14 @@ impl Room {
             }
             let eye = s.eye();
             let dir = look_dir(s.yaw, s.pitch);
-            let wall = self.map.raycast(eye, dir, RIFLE.range).unwrap_or(RIFLE.range);
-            let seen_tick = inp.view_tick.min(tick).max(tick.saturating_sub(MAX_REWIND_TICKS));
+            let wall = self
+                .map
+                .raycast(eye, dir, RIFLE.range)
+                .unwrap_or(RIFLE.range);
+            let seen_tick = inp
+                .view_tick
+                .min(tick)
+                .max(tick.saturating_sub(MAX_REWIND_TICKS));
             let mut best: Option<(PlayerId, f32, bool)> = None;
             let shooter_team = self.players[&shooter].team;
             let ff = self.custom.as_ref().is_none_or(|c| c.config.friendly_fire);
@@ -506,7 +638,10 @@ impl Room {
                 if !ff && shooter_team.is_some() && t.team == shooter_team {
                     continue;
                 }
-                let pose = self.pose_at(seen_tick, tid).filter(|p| p.alive).unwrap_or(t.state);
+                let pose = self
+                    .pose_at(seen_tick, tid)
+                    .filter(|p| p.alive)
+                    .unwrap_or(t.state);
                 if let Some((dist, head)) = ray_vs_player(eye, dir, wall, &pose) {
                     if best.is_none_or(|(_, d, _)| dist < d) {
                         best = Some((tid, dist, head));
@@ -514,7 +649,12 @@ impl Room {
                 }
             }
             let end = eye + dir * best.map(|b| b.1).unwrap_or(wall);
-            events.push(ServerMsg::Shot { shooter, from: eye.to_array(), to: end.to_array() });
+            events.push(ServerMsg::Shot {
+                shooter,
+                from: eye.to_array(),
+                to: end.to_array(),
+            });
+            self.players.get_mut(&shooter).unwrap().fired_at = Some(tick);
             if warmup {
                 // Warm-up: the shot is drawn, nobody is hurt.
                 continue;
@@ -528,7 +668,12 @@ impl Room {
                 if let Some(b) = t.brain.as_mut() {
                     b.hurt_by(shooter, tick);
                 }
-                events.push(ServerMsg::Hit { shooter, target: tid, damage: dmg, head });
+                events.push(ServerMsg::Hit {
+                    shooter,
+                    target: tid,
+                    damage: dmg,
+                    head,
+                });
                 if t.state.health <= 0.0 {
                     t.state.alive = false;
                     t.deaths += 1;
@@ -548,15 +693,23 @@ impl Room {
                             c.team_kills[kt as usize] += 1;
                         }
                     }
-                    events.push(ServerMsg::Kill { killer: shooter, victim: tid, head });
+                    events.push(ServerMsg::Kill {
+                        killer: shooter,
+                        victim: tid,
+                        head,
+                    });
                 }
             }
         }
 
         // 3a. Health comes back after REGEN_DELAY seconds without taking damage.
         for p in self.players.values_mut() {
-            if p.state.alive && p.state.health < game_core::MAX_HEALTH && tick.saturating_sub(p.hurt_at) >= REGEN_DELAY_TICKS {
-                p.state.health = (p.state.health + REGEN_PER_SEC * game_core::DT).min(game_core::MAX_HEALTH);
+            if p.state.alive
+                && p.state.health < game_core::MAX_HEALTH
+                && tick.saturating_sub(p.hurt_at) >= REGEN_DELAY_TICKS
+            {
+                p.state.health =
+                    (p.state.health + REGEN_PER_SEC * game_core::DT).min(game_core::MAX_HEALTH);
             }
         }
 
@@ -569,18 +722,28 @@ impl Room {
                 p.state = PlayerState::spawn(sp.pos, sp.yaw);
                 p.respawn_at = None;
                 p.queue.clear();
-                p.last_input = Input { yaw: sp.yaw, ..Default::default() };
+                p.last_input = Input {
+                    yaw: sp.yaw,
+                    ..Default::default()
+                };
                 events.push(ServerMsg::Respawn { id: *id });
             }
         }
 
         // 4. Remember poses for future rewinds.
-        self.history.push_back((tick, self.players.iter().map(|(id, p)| (*id, p.state)).collect()));
+        self.history.push_back((
+            tick,
+            self.players.iter().map(|(id, p)| (*id, p.state)).collect(),
+        ));
         while self.history.len() > HISTORY_TICKS {
             self.history.pop_front();
         }
 
-        for e in &events {
+        // Shots go out with the snapshots below: only to players allowed to know the shooter.
+        let (shots, others): (Vec<ServerMsg>, Vec<ServerMsg>) = events
+            .into_iter()
+            .partition(|e| matches!(e, ServerMsg::Shot { .. }));
+        for e in &others {
             self.broadcast(e);
         }
 
@@ -589,9 +752,18 @@ impl Room {
         let leader = self
             .players
             .iter()
-            .min_by(|(ia, a), (ib, b)| b.kills.cmp(&a.kills).then(a.deaths.cmp(&b.deaths)).then(ia.cmp(ib)))
+            .min_by(|(ia, a), (ib, b)| {
+                b.kills
+                    .cmp(&a.kills)
+                    .then(a.deaths.cmp(&b.deaths))
+                    .then(ia.cmp(ib))
+            })
             .map(|(id, p)| (*id, p.kills));
-        let team_scores = self.custom.as_ref().filter(|c| c.config.teams).map(|c| c.team_kills);
+        let team_scores = self
+            .custom
+            .as_ref()
+            .filter(|c| c.config.teams)
+            .map(|c| c.team_kills);
         let target_hit = match team_scores {
             Some(t) => t[0] >= self.kill_target || t[1] >= self.kill_target,
             None => leader.is_some_and(|(_, k)| k >= self.kill_target),
@@ -602,14 +774,27 @@ impl Room {
             self.end_now = false;
         } else if self.end_now || target_hit || tick - self.match_start >= self.match_ticks {
             self.end_now = false;
-            let scores = self.players.iter().map(|(id, p)| (*id, p.kills, p.deaths)).collect();
+            let scores = self
+                .players
+                .iter()
+                .map(|(id, p)| (*id, p.kills, p.deaths))
+                .collect();
             let winner_team = team_scores.and_then(|t| match t[0].cmp(&t[1]) {
                 std::cmp::Ordering::Greater => Some(0),
                 std::cmp::Ordering::Less => Some(1),
                 std::cmp::Ordering::Equal => None,
             });
-            let winner = if team_scores.is_some() { None } else { leader.filter(|(_, k)| *k > 0).map(|l| l.0) };
-            self.broadcast(&ServerMsg::MatchEnd { winner, scores, winner_team, team_scores });
+            let winner = if team_scores.is_some() {
+                None
+            } else {
+                leader.filter(|(_, k)| *k > 0).map(|l| l.0)
+            };
+            self.broadcast(&ServerMsg::MatchEnd {
+                winner,
+                scores,
+                winner_team,
+                team_scores,
+            });
             self.finished.push(MatchSummary {
                 room: self.id,
                 started_tick: self.match_start,
@@ -617,7 +802,18 @@ impl Room {
                 players: self
                     .players
                     .iter()
-                    .map(|(id, p)| (*id, p.name.clone(), p.ident.clone(), p.kills, p.deaths, p.headshots, p.best_streak, p.is_bot()))
+                    .map(|(id, p)| {
+                        (
+                            *id,
+                            p.name.clone(),
+                            p.ident.clone(),
+                            p.kills,
+                            p.deaths,
+                            p.headshots,
+                            p.best_streak,
+                            p.is_bot(),
+                        )
+                    })
                     .collect(),
                 ranked: self.custom.is_none(),
             });
@@ -633,7 +829,8 @@ impl Room {
             }
         }
 
-        // 6. Per-player snapshot (ack + ammo are private to each player).
+        // 6. Per-player snapshot (ack + ammo are private to each player). With fog of war on,
+        //    opponents a player can neither see nor hear are sent as hidden stubs (scoreboard only).
         let snaps: Vec<PlayerSnap> = self
             .players
             .iter()
@@ -652,22 +849,103 @@ impl Room {
                 bot: p.is_bot(),
                 cosmetic: p.ident.cosmetic.clone(),
                 team: p.team,
-                mantle: p.state.mantle.map(|m| [m.from.x, m.from.y, m.from.z, m.to.x, m.to.y, m.to.z, m.t, m.dur]),
+                mantle: p.state.mantle.map(|m| {
+                    [
+                        m.from.x, m.from.y, m.from.z, m.to.x, m.to.y, m.to.z, m.t, m.dur,
+                    ]
+                }),
+                hidden: false,
             })
             .collect();
-        let team_scores = self.custom.as_ref().filter(|c| c.config.teams).map(|c| c.team_kills);
-        for p in self.players.values() {
-            if let Some(tx) = &p.tx {
-                let msg = ServerMsg::Snapshot {
-                    tick,
-                    ack: p.applied_seq,
-                    ammo: p.state.ammo,
-                    reloading: p.state.reload_t > 0.0,
-                    players: snaps.clone(),
-                    team_scores,
-                };
-                let _ = tx.send(msg.to_json());
+        self.update_fog();
+        let team_scores = self
+            .custom
+            .as_ref()
+            .filter(|c| c.config.teams)
+            .map(|c| c.team_kills);
+        for (rid, p) in &self.players {
+            let Some(tx) = &p.tx else { continue };
+            let knows = |id: PlayerId| id == *rid || p.seen.get(&id).is_some_and(|&t| t >= tick);
+            for shot in &shots {
+                if let ServerMsg::Shot { shooter, .. } = shot {
+                    if knows(*shooter) {
+                        let _ = tx.send(shot.to_json());
+                    }
+                }
             }
+            let players = snaps
+                .iter()
+                .map(|s| {
+                    if knows(s.id) {
+                        s.clone()
+                    } else {
+                        PlayerSnap {
+                            pos: [0.0; 3],
+                            vel: [0.0; 3],
+                            yaw: 0.0,
+                            pitch: 0.0,
+                            crouch: false,
+                            hp: 0.0,
+                            mantle: None,
+                            hidden: true,
+                            ..s.clone()
+                        }
+                    }
+                })
+                .collect();
+            let msg = ServerMsg::Snapshot {
+                tick,
+                ack: p.applied_seq,
+                ammo: p.state.ammo,
+                reloading: p.state.reload_t > 0.0,
+                players,
+                team_scores,
+            };
+            let _ = tx.send(msg.to_json());
+        }
+    }
+
+    /// Fog of war: refresh, for every human, which opponents they may know about (see `sight`).
+    /// Hearing is checked every tick (cheap); sight lines every third tick, staggered per pair.
+    fn update_fog(&mut self) {
+        let tick = self.tick;
+        let teams = self.teams_on();
+        let fog = self.fog;
+        let all: Vec<(PlayerId, PlayerState, Option<u8>, Option<u32>)> = self
+            .players
+            .iter()
+            .map(|(id, p)| (*id, p.state, p.team, p.fired_at))
+            .collect();
+        let sight = &self.sight;
+        for (rid, r) in self.players.iter_mut() {
+            if r.tx.is_none() {
+                continue; // bots read the world directly
+            }
+            let (eye, vel) = (r.state.eye(), r.state.vel);
+            for (oid, o, team, fired) in &all {
+                if oid == rid {
+                    continue;
+                }
+                let until = r.seen.get(oid).copied();
+                let mut relevant = !fog || (teams && team.is_some() && *team == r.team);
+                if !relevant {
+                    let d = (o.pos - r.state.pos).length();
+                    let shot = fired.is_some_and(|f| tick.saturating_sub(f) <= sight::SHOT_TICKS)
+                        && d <= sight::SHOT_RANGE;
+                    relevant = shot || d <= sight::hear_range(o) + sight::HEAR_MARGIN;
+                }
+                if !relevant {
+                    // New pairs are checked at once; known ones every third tick.
+                    let due = until.is_none() || (tick + rid + oid) % 3 == 0;
+                    relevant = due && sight.can_see(eye, vel, o);
+                }
+                if relevant {
+                    r.seen.insert(*oid, tick + sight::HOLD_TICKS);
+                } else if until.is_none() {
+                    r.seen.insert(*oid, 0); // checked: hidden
+                }
+            }
+            r.seen.retain(|id, _| all.iter().any(|(o, ..)| o == id));
         }
     }
 

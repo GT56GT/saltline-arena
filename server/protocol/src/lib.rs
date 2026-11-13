@@ -45,7 +45,16 @@ fn default_minutes() -> u32 {
 }
 impl Default for RoomConfig {
     fn default() -> Self {
-        Self { teams: true, bots: 0, balance_bots: false, replace_leavers: false, friendly_fire: false, kill_target: 30, minutes: 8, damage: 100 }
+        Self {
+            teams: true,
+            bots: 0,
+            balance_bots: false,
+            replace_leavers: false,
+            friendly_fire: false,
+            kill_target: 30,
+            minutes: 8,
+            damage: 100,
+        }
     }
 }
 impl RoomConfig {
@@ -76,14 +85,22 @@ pub enum ClientMsg {
         create: Option<RoomConfig>,
     },
     /// Private rooms, before the match: move to team 0 or 1.
-    SetTeam { team: u8 },
+    SetTeam {
+        team: u8,
+    },
     /// Host only, before the match: change the room settings.
-    Configure { config: RoomConfig },
+    Configure {
+        config: RoomConfig,
+    },
     /// Host only: start the match (also restarts after one ends).
     Start,
     /// One or more ticks of input, oldest first.
-    Input { inputs: Vec<Input> },
-    Ping { c: u64 },
+    Input {
+        inputs: Vec<Input>,
+    },
+    Ping {
+        c: u64,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -110,13 +127,23 @@ pub struct PlayerSnap {
     /// Climbing a ledge: [from x y z, to x y z, seconds in, total seconds].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mantle: Option<[f32; 8]>,
+    /// Fog of war: this opponent is out of your sight and earshot. Only id, name, team and the
+    /// scoreboard fields are real; position, velocity, aim, health and stance are zeroed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ServerMsg {
     /// Sent once on join, with the exact map the server simulates (the client draws and predicts on it).
-    Welcome { id: PlayerId, tick: u32, tick_hz: u32, kill_target: u32, map: Map },
+    Welcome {
+        id: PlayerId,
+        tick: u32,
+        tick_hz: u32,
+        kill_target: u32,
+        map: Map,
+    },
     /// Authoritative world state. `ack` = last input seq the server applied for this client
     /// (the client replays newer inputs on top of it for prediction).
     Snapshot {
@@ -131,13 +158,38 @@ pub enum ServerMsg {
     },
     /// Private room state: sent on join and whenever the host, phase, settings or teams change.
     /// `live` = false is the warm-up before the host starts (nobody can be hurt).
-    Room { code: String, host: PlayerId, live: bool, config: RoomConfig },
-    Shot { shooter: PlayerId, from: [f32; 3], to: [f32; 3] },
-    Hit { shooter: PlayerId, target: PlayerId, damage: f32, head: bool },
-    Kill { killer: PlayerId, victim: PlayerId, head: bool },
-    Respawn { id: PlayerId },
-    Joined { id: PlayerId, name: String },
-    Left { id: PlayerId },
+    Room {
+        code: String,
+        host: PlayerId,
+        live: bool,
+        config: RoomConfig,
+    },
+    Shot {
+        shooter: PlayerId,
+        from: [f32; 3],
+        to: [f32; 3],
+    },
+    Hit {
+        shooter: PlayerId,
+        target: PlayerId,
+        damage: f32,
+        head: bool,
+    },
+    Kill {
+        killer: PlayerId,
+        victim: PlayerId,
+        head: bool,
+    },
+    Respawn {
+        id: PlayerId,
+    },
+    Joined {
+        id: PlayerId,
+        name: String,
+    },
+    Left {
+        id: PlayerId,
+    },
     MatchEnd {
         winner: Option<PlayerId>,
         scores: Vec<(PlayerId, u32, u32)>,
@@ -146,8 +198,12 @@ pub enum ServerMsg {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         team_scores: Option<[u32; 2]>,
     },
-    Pong { c: u64 },
-    Error { msg: String },
+    Pong {
+        c: u64,
+    },
+    Error {
+        msg: String,
+    },
 }
 
 impl ServerMsg {

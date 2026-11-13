@@ -364,6 +364,12 @@ export function attachRenderer(win: any, client: GameClient): () => void {
           if (stepsHeard.has(r.id)) steps.step(r.id, pose, a.groundSpeed, camPos, ally, facing);
           stepsHeard.set(r.id, a.steps);
         }
+      } else {
+        // Hidden by fog of war (or no data yet): nothing drawn, nothing to hit, no sounds.
+        a.root.visible = false;
+        stepsHeard.delete(r.id);
+        climbHeard.delete(r.id);
+        steps.forget(r.id);
       }
     }
     for (const [id, a] of avatars) if (!seen.has(id)) { a.dispose(); avatars.delete(id); stepsHeard.delete(id); climbHeard.delete(id); steps.forget(id); }
