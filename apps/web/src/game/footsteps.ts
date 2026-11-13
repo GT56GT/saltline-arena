@@ -4,8 +4,11 @@
 //   - every way of moving has a hearing distance; past it the sound is cut off entirely,
 //   - volume stays strong nearby and fades fast toward the edge; distant steps lose some treble,
 //   - every sound plays in 3D with head-related panning (HRTF): front/back and above/below are audible,
-//   - enemies first: teammates are quieter and carry half as far; at most 4 enemy steps play at
-//     once, and the quietest (after a boost for enemies facing you) gives way.
+//   - walls muffle: a ray from your head to the walker's chest; blocked = half volume and dull (900 Hz),
+//     blocked and over 2 m above or below you (on or in a container) = through-the-floor (500 Hz),
+//   - enemies first: teammates are quieter and carry half as far (setting: normal / quiet / off);
+//     at most 4 enemy steps play at once, and the quietest (after a boost for enemies facing you) gives way,
+//   - an enemy step within 15 m briefly lowers the ambience (sea, wind, rain) so it is not drowned out.
 // Distances are in metres. Volumes are linear gain before the effects slider.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -22,8 +25,16 @@ export const HEAR: Record<Move, Hearing> = {
   jump: { range: 10, gain: 0.45 },
   crouch: { range: 5, gain: 0.3 },
 };
-/** Teammates: volume and hearing distance relative to an enemy's. */
-export const TEAMMATE = { gain: 0.4, range: 0.5 };
+/** Teammates' volume and hearing distance relative to an enemy's, per setting ("off" = never heard). */
+export type TeamMode = "normal" | "quiet" | "off";
+export const TEAM_MODES: Record<TeamMode, Hearing | null> = {
+  normal: { gain: 0.7, range: 1 },
+  quiet: { gain: 0.4, range: 0.5 },
+  off: null,
+};
+export const TEAMMATE = TEAM_MODES.quiet!;
+/** Enemy steps closer than this lower the ambience. */
+export const DUCK_RANGE = 15;
 export const MAX_ENEMY_VOICES = 4;
 export const MAX_TEAM_VOICES = 2;
 /** Slower than this is standing still: silent. Faster than SPRINT is a sprint. */
@@ -59,12 +70,23 @@ export function landing(fall: number): Hearing {
 
 export interface StepPlan { gain: number; lp: number; score: number }
 
+/** What a wall or floor between us does: volume factor and low-pass cutoff (Hz). */
+export interface Muffle { k: number; lp: number }
+export const OPEN: Muffle = { k: 1, lp: 22000 };
+export const WALL: Muffle = { k: 0.5, lp: 900 };
+export const FLOOR: Muffle = { k: 0.5, lp: 500 };
+export function muffle(blocked: boolean, dy: number): Muffle {
+  if (!blocked) return OPEN;
+  return Math.abs(dy) > 2 ? FLOOR : WALL;
+}
+
 /** What a sound should be at this distance, or null when it is out of earshot. */
-export function plan(h: Hearing, dist: number, ally: boolean, facing: boolean): StepPlan | null {
-  const R = h.range * (ally ? TEAMMATE.range : 1);
-  const gain = h.gain * falloff(dist, R) * (ally ? TEAMMATE.gain : 1);
+export function plan(h: Hearing, dist: number, ally: boolean, facing: boolean, team: Hearing | null = TEAMMATE, m: Muffle = OPEN, volume = 1): StepPlan | null {
+  if (ally && !team) return null;
+  const R = h.range * (ally ? team!.range : 1);
+  const gain = h.gain * falloff(dist, R) * (ally ? team!.gain : 1) * m.k * volume;
   if (gain < 0.01) return null;
-  return { gain, lp: treble(dist, R), score: gain * (facing ? 1.5 : 1) };
+  return { gain, lp: Math.min(treble(dist, R), m.lp), score: gain * (facing ? 1.5 : 1) };
 }
 
 /** Voice budget: at most N steps at once per side; a louder (or more threatening) one displaces the quietest. */
@@ -97,9 +119,39 @@ export class Footsteps {
   readonly mixer = new StepMixer();
   private bodies = new Map<number, Body>();
   /** Last sounds played, newest last (for tests and debugging). */
-  readonly log: { id: number; what: string; move: Move; dist: number; gain: number; lp: number; ally: boolean }[] = [];
+  readonly log: { id: number; what: string; move: Move; dist: number; gain: number; lp: number; ally: boolean; muffled: string }[] = [];
+  /** Settings: overall volume (0..1.5) and how teammates sound. */
+  volume = 1;
+  team: TeamMode = "quiet";
+  /** Called when an enemy sound plays within DUCK_RANGE (the bridge lowers the ambience). */
+  onNearEnemy: ((dist: number) => void) | null = null;
+  private walls = new Map<number, { t: number; m: Muffle }>();
 
   constructor(private G: any) {}
+
+  /** Is there level geometry between our head and the walker's chest? Cached 100 ms per player. */
+  private muffleFor(id: number, feet: number[], listener: { x: number; y: number; z: number }): Muffle {
+    const now = performance.now();
+    const c = this.walls.get(id);
+    if (c && now - c.t < 100) return c.m;
+    let m = OPEN;
+    try {
+      const T = this.G.THREE, ph = this.G.physics;
+      if (ph && ph.raycast) {
+        const from = new T.Vector3(listener.x, listener.y, listener.z);
+        const to = new T.Vector3(feet[0], feet[1] + 1.0, feet[2]);
+        const dir = to.clone().sub(from);
+        const len = dir.length();
+        if (len > 0.5) {
+          dir.divideScalar(len);
+          const hit = ph.raycast(from, dir, len);
+          m = muffle(!!hit && hit.dist < len - 0.4, to.y - from.y);
+        }
+      }
+    } catch { /* no physics: assume open */ }
+    this.walls.set(id, { t: now, m });
+    return m;
+  }
 
   private surfaceAt(x: number, z: number): string {
     const G = this.G;
@@ -113,7 +165,11 @@ export class Footsteps {
 
   private play(id: number, what: string, move: Move, h: Hearing, pos: number[], listener: { x: number; y: number; z: number }, ally: boolean, facing: boolean, extra: Record<string, unknown> = {}): boolean {
     const dist = Math.hypot(pos[0] - listener.x, pos[1] - listener.y, pos[2] - listener.z);
-    const p = plan(h, dist, ally, facing);
+    const team = TEAM_MODES[this.team];
+    // Out of earshot even unmuffled: skip the raycast.
+    if (!plan(h, dist, ally, facing, team, OPEN, this.volume)) return false;
+    const m = this.muffleFor(id, pos, listener);
+    const p = plan(h, dist, ally, facing, team, m, this.volume);
     if (!p) return false;
     if (!this.mixer.admit(performance.now() / 1000, p.score, ally)) return false;
     const T = this.G.THREE;
@@ -124,7 +180,10 @@ export class Footsteps {
         gain: p.gain, max: 8, pri: ally ? 3 : 6, jitter: 0.08, ...extra,
       });
     } catch { /* audio optional */ }
-    this.log.push({ id, what, move, dist: Math.round(dist * 10) / 10, gain: Math.round(p.gain * 1000) / 1000, lp: p.lp, ally });
+    if (!ally && dist < DUCK_RANGE && this.onNearEnemy) {
+      try { this.onNearEnemy(dist); } catch { /* */ }
+    }
+    this.log.push({ id, what, move, dist: Math.round(dist * 10) / 10, gain: Math.round(p.gain * 1000) / 1000, lp: p.lp, ally, muffled: m === FLOOR ? "floor" : m === WALL ? "wall" : "" });
     if (this.log.length > 40) this.log.shift();
     return true;
   }
@@ -180,5 +239,5 @@ export class Footsteps {
     }
   }
 
-  forget(id: number) { this.bodies.delete(id); }
+  forget(id: number) { this.bodies.delete(id); this.walls.delete(id); }
 }

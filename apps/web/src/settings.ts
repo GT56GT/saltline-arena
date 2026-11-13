@@ -3,6 +3,7 @@
 
 export type Quality = "auto" | "low" | "medium" | "high";
 export type NameMode = "aim" | "always";
+export type TeamSteps = "normal" | "quiet" | "off";
 
 export interface Settings {
   sens: number; // 0.2 .. 3
@@ -14,6 +15,9 @@ export interface Settings {
   ambience: number;
   music: number; // in matches; 0 = off
   names: NameMode; // enemy names: under the crosshair only, or always
+  footsteps: number; // other players' movement sounds, 0 .. 1.5
+  teamSteps: TeamSteps; // teammates' footsteps: as loud as enemies (normal), quieter, or off
+  noise: boolean; // show how far my own movement can be heard
 }
 
 export const DEFAULTS: Settings = {
@@ -26,6 +30,9 @@ export const DEFAULTS: Settings = {
   ambience: 0.7,
   music: 0,
   names: "aim",
+  footsteps: 1,
+  teamSteps: "quiet",
+  noise: true,
 };
 
 const KEY = "arena.settings.v1";
@@ -41,6 +48,9 @@ function load(): Settings {
     if (!["auto", "low", "medium", "high"].includes(s.quality)) s.quality = "auto";
     if (s.names !== "always") s.names = "aim";
     s.invertY = !!s.invertY;
+    s.footsteps = clamp(+s.footsteps, 0, 1.5, DEFAULTS.footsteps);
+    if (!["normal", "quiet", "off"].includes(s.teamSteps)) s.teamSteps = "quiet";
+    s.noise = s.noise !== false;
     return s;
   } catch {
     return { ...DEFAULTS };
@@ -75,3 +85,6 @@ export function onSettings(f: (s: Settings) => void): () => void {
   listeners.add(f);
   return () => listeners.delete(f);
 }
+
+// Handy for debugging and automated tests (like `window.arena` for the client).
+if (typeof window !== "undefined") (window as unknown as { arenaSettings: unknown }).arenaSettings = { get: getSettings, update: updateSettings };

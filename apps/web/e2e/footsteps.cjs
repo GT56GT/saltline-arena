@@ -126,6 +126,60 @@ const HOOK = () => {
   });
   ok("other game sounds unchanged (equalpower, engine roll-off)", imp && imp.model === "equalpower" && imp.roll === 0.7, JSON.stringify(imp));
 
+  // ---------------------------------------------------------------- Phase 2
+  // Behind a wall: find level geometry 2-10 m away at head height, put the walker 2 m beyond it.
+  const wall = await frame.evaluate(() => {
+    const T = __G.THREE, c = __G.camera.position;
+    for (let i = 0; i < 64; i++) {
+      const a = (i / 64) * Math.PI * 2, dir = new T.Vector3(Math.sin(a), 0, Math.cos(a));
+      const h = __G.physics.raycast(c.clone(), dir, 10);
+      if (h && h.dist > 2 && h.dist < 10) return { ang: a, d: h.dist + 2 };
+    }
+    return null;
+  });
+  if (wall) {
+    await frame.evaluate(() => { __arena.steps["walls"].clear(); });
+    r = await probe({ d: wall.d, ang: wall.ang, dy: -0.95, move: "walk", ally: false, kind: "step" });
+    const e = r.entries[0];
+    ok("walker behind a wall: muffled (half volume, 900 Hz)", e && e.muffled === "wall" && r.lp === 900, JSON.stringify(e) + ` lp ${r.lp}`);
+  } else ok("found a wall near the spawn to test muffling", false);
+  await frame.evaluate(() => { __arena.steps["walls"].clear(); });
+  r = await probe({ d: 0.8, ang: 0.2, dy: 0, move: "walk", ally: false, kind: "step" });
+  ok("walker in the open next to us: not muffled", r.entries[0] && r.entries[0].muffled === "", JSON.stringify(r.entries));
+
+  // Settings reach the footstep module.
+  await page.evaluate(() => arenaSettings.update({ footsteps: 1.5, teamSteps: "off" }));
+  const vol = await probe({ d: 5, ang: 2.5, dy: 0, move: "walk", ally: false, kind: "step" });
+  const off = await probe({ d: 2, ang: 2.5, dy: 0, move: "walk", ally: true, kind: "step" });
+  ok("setting: footstep volume 150% is louder", vol.entries[0] && vol.entries[0].gain > 0.7 * Math.pow(1 - (5 / 18) ** 2, 1.5) * 1.4, JSON.stringify(vol.entries));
+  ok("setting: teammate footsteps off", off.entries.length === 0);
+  await page.evaluate(() => arenaSettings.update({ footsteps: 1, teamSteps: "quiet" }));
+
+  // Ambience dips while an enemy steps close by, not for one far away.
+  const duck = await frame.evaluate(async () => {
+    let n = 0;
+    const orig = __G.audio.duckBus;
+    __G.audio.duckBus = (...a) => { n++; return orig.apply(__G.audio, a); };
+    return typeof orig === "function";
+  });
+  ok("engine has the ambience duck", duck);
+  const ducks = async (args) => {
+    await frame.evaluate(() => { window.__ducks = 0; const o = __G.audio.duckBus; if (!o.__w) { const w = (...a) => { window.__ducks++; return o.apply(__G.audio, a); }; w.__w = 1; __G.audio.duckBus = w; } });
+    await probe(args);
+    return frame.evaluate(() => window.__ducks);
+  };
+  ok("enemy step at 6 m lowers the ambience", (await ducks({ d: 6, ang: 1.2, dy: 0, move: "walk", ally: false, kind: "step" })) === 1);
+  ok("enemy sprint at 25 m does not", (await ducks({ d: 25, ang: 1.2, dy: 0, move: "sprint", ally: false, kind: "step" })) === 0);
+
+  // Noise indicator in the game HUD: silent standing still, hidden when switched off.
+  await frame.waitForFunction(() => document.querySelector(".h-noise b"), null, { timeout: 20000 });
+  const ni = await frame.evaluate(() => { const e = document.querySelector(".h-noise"); return { text: e.textContent, cls: e.className }; });
+  ok("noise indicator shows Silent when standing still", /Silent/.test(ni.text) && ni.cls === "h-noise", JSON.stringify(ni));
+  await page.evaluate(() => arenaSettings.update({ noise: false }));
+  await frame.waitForFunction(() => document.querySelector(".h-noise").classList.contains("off"), null, { timeout: 20000 }).catch(() => {});
+  ok("noise indicator hides when switched off", await frame.evaluate(() => document.querySelector(".h-noise").classList.contains("off")));
+  await page.evaluate(() => arenaSettings.update({ noise: true }));
+
   // ---------------------------------------------------------------- 2. live bot
   await frame.evaluate(() => { __arena.steps.log.length = 0; });
   const b = bot("Walker");
@@ -166,6 +220,13 @@ const HOOK = () => {
   const RANGE = { sprint: 32, walk: 18, crouch: 5, land: 32, jump: 10, climb: 12 };
   const moves = [...new Set(log.map((e) => e.move))].join(",");
   console.log(`      live: ${log.length} sounds (${moves}); fps ${await frame.evaluate(() => window.__frames)}`);
+  await frame.evaluate(() => { __G.input.mode = "drag"; });
+  await page.mouse.click(160, 90); // focus the game
+  await page.keyboard.down("KeyW");
+  await frame.waitForFunction(() => /Heard|Loud/.test(document.querySelector(".h-noise").textContent), null, { timeout: 30000 }).catch(() => {});
+  const walking = await frame.evaluate(() => document.querySelector(".h-noise").textContent);
+  await page.keyboard.up("KeyW");
+  ok("noise indicator: walking shows Heard, 18 m", /Heard.*18 m/.test(walking), walking);
   ok("live bot: its movement is heard", log.length > 0, moves);
   ok("live bot: nothing past its hearing distance", log.every((e) => e.dist < RANGE[e.move]), JSON.stringify(log.filter((e) => e.dist >= RANGE[e.move])));
   ok("no page errors", errs.length === 0, errs.slice(0, 3).join(" | "));

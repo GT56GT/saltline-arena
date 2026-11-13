@@ -39,9 +39,11 @@ const PATCHES = [
     'C.health<=0&&!i.arenaMove&&(C.alive=!1,z=0,C.sprinting=!1,i.events.emit("player:dead",{}))',
   ],
   [
-    "audio: per-channel volume (settings: music, ambience, effects)",
+    "audio: per-channel volume (settings: music, ambience, effects) and ducking",
     "Object.assign(Re,{ctx:e,resume:yr,play:ze,",
-    "Object.assign(Re,{setBus(n,v){let b=H[n];b&&(b.gain.value={world:1,near:.95,amb:.55,dry:1,music:.62}[n]*Math.max(0,Math.min(1,+v||0)))},ctx:e,resume:yr,play:ze,",
+    "Object.assign(Re,{setBus(n,v){let b=H[n];if(!b)return;b._base={world:1,near:.95,amb:.55,dry:1,music:.62}[n]*Math.max(0,Math.min(1,+v||0));let t=e.currentTime;b.gain.cancelScheduledValues(t);b.gain.setValueAtTime(b._base,t)}," +
+      // duckBus: dip a channel to k of its level (attack a s), hold h s, recover over r s.
+      "duckBus(n,k,a,h,r){let b=H[n];if(!b)return;let base=b._base!=null?b._base:b.gain.value,t=e.currentTime;b._base=base;b.gain.cancelScheduledValues(t);b.gain.setValueAtTime(b.gain.value,t);b.gain.setTargetAtTime(base*k,t,a/3);b.gain.setTargetAtTime(base,t+a+h,r/3)},ctx:e,resume:yr,play:ze,",
   ],
   [
     "render: expose the quality presets to the settings menu",
@@ -94,6 +96,17 @@ const arenaCss = `<style>
 .h-relays { display: none !important; }
 .hud .h-obj .h-k { letter-spacing: .18em; }
 #boot .boot-mark::after { content: " ARENA"; color: #ffb347; }
+/* Noise indicator: how far your own movement can be heard. Sits where health fades in, and moves up while it shows. */
+.h-noise { position: absolute; left: var(--gl); bottom: calc(22px + var(--sab)); display: flex; align-items: center; gap: 4px; font: 600 11px/1 var(--f-label); letter-spacing: .22em; text-transform: uppercase; color: var(--bone-dim); transition: transform .25s, opacity .25s; }
+.h-noise b { font-weight: 600; min-width: 5.6em; margin-right: 4px; color: var(--bone); }
+.h-noise i { width: 10px; height: 4px; box-shadow: inset 0 0 0 1px var(--bone-faint); }
+.h-noise i.on { background: var(--bone); box-shadow: 0 0 2px rgba(0, 0, 0, .6); }
+.h-noise[data-l="3"] b { color: var(--signal); }
+.h-noise[data-l="3"] i.on { background: var(--signal); }
+.h-noise em { font: 500 11px/1 var(--f-mono); letter-spacing: .04em; font-style: normal; margin-left: 6px; }
+.h-noise.off { opacity: 0; }
+.h-health.on ~ .h-noise { transform: translateY(-62px); }
+@media (pointer: coarse) { .h-noise { display: none; } }
 </style>`;
 
 let shell = readFileSync(join(here, "shell.html"), "utf8");

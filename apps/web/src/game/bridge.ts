@@ -14,7 +14,7 @@ import { COSMETICS } from "../cosmetics";
 import { Avatar, makeKit, type Kit } from "./avatar";
 import { Operator, loadOperatorKit, type OperatorKit } from "./operator";
 import { getSettings, onSettings, type Settings } from "../settings";
-import { Footsteps } from "./footsteps";
+import { Footsteps, HEAR, moveOf } from "./footsteps";
 
 const RESERVE = 90;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -209,6 +209,47 @@ export function attachRenderer(win: any, client: GameClient): () => void {
   // Other players' footsteps, jumps, landings and climbs: in 3D, by hearing distance, enemies first.
   const steps = new Footsteps(G);
   const climbHeard = new Map<number, boolean>();
+  // An enemy step close by briefly lowers the ambience (sea, wind, rain) by about 4 dB.
+  steps.onNearEnemy = () => { try { G.audio.duckBus && G.audio.duckBus("amb", 0.63, 0.03, 0.15, 0.4); } catch { /* */ } };
+  let noiseOn = true;
+  const applyStepSettings = (st: Settings) => {
+    steps.volume = st.footsteps;
+    steps.team = st.teamSteps;
+    noiseOn = st.noise;
+  };
+  applyStepSettings(getSettings());
+  offs.push(onSettings(applyStepSettings));
+
+  // Noise indicator: how far my own movement can be heard right now (same table as other players').
+  let noiseEl: HTMLElement | null = null;
+  let noiseKey = "";
+  const updateNoise = () => {
+    if (!noiseEl) {
+      const hp = win.document.querySelector(".hud .h-health");
+      if (!hp || !hp.parentElement) return;
+      noiseEl = win.document.createElement("div");
+      noiseEl!.className = "h-noise off";
+      hp.parentElement.insertBefore(noiseEl!, hp.nextSibling);
+    }
+    const p = client.predictor;
+    let level = 0, label = "Silent", range = 0;
+    if (p && client.me.alive) {
+      const move = moveOf(Math.hypot(p.vx(), p.vz()), p.crouching());
+      if (client.climbing) { level = 2; label = "Climbing"; range = HEAR.climb.range; }
+      else if (!p.on_ground()) { level = 3; label = "Landing"; range = HEAR.land.range; }
+      else if (move === "sprint") { level = 3; label = "Loud"; range = HEAR.sprint.range; }
+      else if (move === "walk") { level = 2; label = "Heard"; range = HEAR.walk.range; }
+      else if (move === "crouch") { level = 1; label = "Quiet"; range = HEAR.crouch.range; }
+    }
+    const show = noiseOn && !!p && client.me.alive;
+    const key = `${show}|${level}|${label}`;
+    if (key === noiseKey) return;
+    noiseKey = key;
+    noiseEl!.className = show ? "h-noise" : "h-noise off";
+    noiseEl!.dataset.l = String(level);
+    noiseEl!.innerHTML = `<b>${label}</b>` + [1, 2, 3].map((n) => `<i class="${n <= level ? "on" : ""}"></i>`).join("") + (range ? `<em>${range} m</em>` : "");
+    noiseEl!.title = range ? `Enemies can hear you within about ${range} m` : "Enemies cannot hear you";
+  };
   /** Is this remote player looking roughly at us (within ~45 degrees)? Their steps take priority. */
   const facingUs = (pose: { pos: V3; yaw: number }) => {
     const dx = camPos.x - pose.pos[0], dz = camPos.z - pose.pos[2];
@@ -294,6 +335,7 @@ export function attachRenderer(win: any, client: GameClient): () => void {
 
     // Other players.
     camPos.copy(G.camera.position);
+    updateNoise();
     const st = getSettings();
     findAimed(now);
     const seen = new Set<number>();

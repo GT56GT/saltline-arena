@@ -5,7 +5,8 @@ import type { PlayerId } from "../protocol";
 // ============================================================================ matchmaking
 const TIPS = [
   "Jump facing a container to climb onto it. Double stacks are too tall.",
-  "Crouch-walking is almost silent. Sprinting can be heard from far away.",
+  "Crouch-walking is heard only within 5 m. Sprinting carries about 32 m.",
+  "Landings are loud: drop off a container and anyone within about 24 m knows.",
   "Health comes back after four seconds out of the fight.",
   "Damage drops off past 25 metres: close the distance or aim for the head.",
   "Tab shows the scoreboard. Esc opens the menu and settings.",

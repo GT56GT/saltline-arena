@@ -48,6 +48,11 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
               <>
                 <Slider label="Master volume" value={s.master} min={0} max={1} step={0.01} fmt={pct} onChange={(v) => set({ master: v })} />
                 <Slider label="Effects (guns, footsteps)" value={s.effects} min={0} max={1} step={0.01} fmt={pct} onChange={(v) => set({ effects: v })} />
+                <Slider label="Other players' footsteps" value={s.footsteps} min={0} max={1.5} step={0.01} fmt={pct} onChange={(v) => set({ footsteps: v })}
+                  hint="Steps, jumps, landings and climbs. Above 100% makes them stand out more." />
+                <Choice label="Teammate footsteps" value={s.teamSteps} options={[["normal", "Normal"], ["quiet", "Quiet"], ["off", "Off"]]} onChange={(v) => set({ teamSteps: v })}
+                  hint="Quiet keeps enemies easy to pick out. Applies in team matches." />
+                <Toggle label="Show my noise level" value={s.noise} onChange={(v) => set({ noise: v })} />
                 <Slider label="Ambience (sea, rain, wind)" value={s.ambience} min={0} max={1} step={0.01} fmt={pct} onChange={(v) => set({ ambience: v })} />
                 <Slider label="Music in matches" value={s.music} min={0} max={1} step={0.01} fmt={(v) => (v === 0 ? "Off" : pct(v))} onChange={(v) => set({ music: v })}
                   hint="Off by default so you can hear footsteps." />
