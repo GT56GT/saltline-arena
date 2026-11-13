@@ -2,7 +2,7 @@ import { useCallback, useEffect, useReducer, useState } from "react";
 import { client, type JoinRequest } from "./client";
 import { DEFAULT_ROOM } from "./protocol";
 import { GameView } from "./GameView";
-import { api, hasWallet, httpBase, mintOnChain, serverUrl, session, shortAddr, signInWithWallet, type BoardRow, type ChainInfo, type Item, type Me } from "./api";
+import { api, hasWallet, mintOnChain, serverUrl, session, shortAddr, signInWithWallet, type BoardRow, type ChainInfo, type Item, type Me } from "./api";
 
 function useClient() {
   // Re-render on client events, plus a 10 Hz pulse for timers (hit marker, feed fade).
@@ -41,7 +41,7 @@ function Lobby({ onDeploy }: { onDeploy: (url: string, name: string, join: JoinR
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
   const [guestName, setGuestName] = useState(() => localStorage.getItem("arena.name") || "");
-  const [server, setServer] = useState(serverUrl());
+  const server = serverUrl();
 
   const refresh = useCallback(async () => {
     if (!session.token) return setMe(null);
@@ -63,6 +63,10 @@ function Lobby({ onDeploy }: { onDeploy: (url: string, name: string, join: JoinR
 
   const signIn = async () => {
     setErr("");
+    if (!hasWallet()) {
+      setErr("No wallet found in this browser. Install MetaMask (or another Ethereum wallet) to sign in — guests can play without one.");
+      return;
+    }
     setBusy("Check your wallet to sign the message…");
     try {
       await signInWithWallet();
@@ -77,65 +81,66 @@ function Lobby({ onDeploy }: { onDeploy: (url: string, name: string, join: JoinR
     const name = (me?.account.callsign || guestName.trim() || "Breacher").slice(0, 16);
     try {
       localStorage.setItem("arena.name", guestName);
-      localStorage.setItem("arena.server", server);
     } catch { /* private mode */ }
     onDeploy(server, name, join);
   };
   const deploy = () => go({ kind: "quick" });
 
+  const joinCode = () => code.length === 5 && go({ kind: "code", code });
+  const errorText = err || (c.error ? "Couldn't reach the match server. If nobody has played for a while it needs about a minute to wake up — try again shortly." : "");
+
   return (
     <main className="lobby">
-      <section className="lobby-main">
-        <p className="eyebrow"><span className="tag-b">B4</span>Port Authority Breach Unit · Arena</p>
-        <h1 className="word">SALTLINE<br />ARENA</h1>
-        <p className="premise">Free-for-all in the container yard, up to 8 breachers. First to {c.killTarget} kills. The server referees every shot; your rank lives on-chain.</p>
-
-        <div className="join">
+      <header className="lobby-top">
+        <p className="eyebrow"><span className="tag-b">B4</span>Port Authority Breach Unit</p>
+        <div className="account">
           {me ? (
             <div className="who">
-              <span className="k">Signed in</span>
               <b>{me.account.callsign || shortAddr(me.account.wallet)}</b>
-              <span className="dim">{Math.round(me.stats.rating)} rating · {me.stats.matches} matches</span>
+              <span>{Math.round(me.stats.rating)} rating · {me.stats.matches} matches</span>
             </div>
           ) : (
-            <>
-              <label htmlFor="name">Callsign</label>
-              <input id="name" maxLength={16} placeholder="Play as a guest" value={guestName} onChange={(e) => setGuestName(e.target.value)} />
-            </>
-          )}
-          {invited ? (
-            <button className="btn primary" onClick={() => go({ kind: "code", code: invited })}>Join room {invited}</button>
-          ) : (
-            <button className="btn primary" onClick={deploy}>Quick play</button>
-          )}
-          <div className="friends">
-            <span className="k">Play with friends</span>
-            <div className="row">
-              <button className="btn ghost" onClick={() => go({ kind: "create", config: DEFAULT_ROOM })}>Create room</button>
-              <input
-                aria-label="Room code" placeholder="Code" maxLength={5} value={code} spellCheck={false}
-                onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
-                onKeyDown={(e) => { if (e.key === "Enter" && code.length === 5) go({ kind: "code", code }); }}
-              />
-              <button className="btn ghost" disabled={code.length !== 5} onClick={() => go({ kind: "code", code })}>Join</button>
-            </div>
-            <p className="hint">You host the room: pick teams, decide whether bots join, and start when everyone is in. Rooms are casual (no rating change).</p>
-          </div>
-          {invited && <button className="btn ghost" onClick={deploy}>Quick play instead</button>}
-          {!me && (
-            <button className="btn ghost" onClick={signIn} disabled={!!busy}>
-              {busy ? "Waiting for wallet…" : hasWallet() ? "Sign in with wallet" : "Sign in with wallet (none found)"}
+            <button className="btn ghost small" onClick={signIn} disabled={!!busy} title="Keep a rating, earn badges and claim cosmetics. Free; sends no transaction.">
+              {busy ? "Check your wallet…" : "Sign in with wallet"}
             </button>
           )}
-          {!me && <p className="hint">Guests can play right away. Sign in to keep a rating, earn badges and claim cosmetics. Signing is free and sends no transaction.</p>}
-          {busy && <p className="hint">{busy}</p>}
-          {(err || c.error) && <p className="err">{err || `${c.error} Is the server running at ${server}?`}</p>}
-          <details>
-            <summary>Server</summary>
-            <input value={server} onChange={(e) => setServer(e.target.value)} spellCheck={false} />
-          </details>
         </div>
-      </section>
+      </header>
+
+      <div className="lobby-body">
+        <section className="hero">
+          <h1 className="word">SALTLINE<br />ARENA</h1>
+          <p className="premise">Squad fights and free-for-all in the Saltline container terminal. Up to eight players, every shot judged by the server.</p>
+
+          <div className="play">
+            {!me && (
+              <label className="field">
+                <span className="k">Callsign</span>
+                <input id="name" maxLength={16} placeholder="Guest" value={guestName} onChange={(e) => setGuestName(e.target.value)} />
+              </label>
+            )}
+            {invited ? (
+              <button className="btn primary" onClick={() => go({ kind: "code", code: invited })}>Join room {invited}</button>
+            ) : (
+              <button className="btn primary" onClick={deploy}>Quick play</button>
+            )}
+
+            <div className="divider"><span>Play with friends</span></div>
+            <div className="friends-row">
+              <button className="btn ghost" onClick={() => go({ kind: "create", config: DEFAULT_ROOM })}>Create room</button>
+              <div className="code-group">
+                <input
+                  aria-label="Room code" placeholder="Room code" maxLength={5} value={code} spellCheck={false} autoCapitalize="characters"
+                  onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+                  onKeyDown={(e) => { if (e.key === "Enter") joinCode(); }}
+                />
+                <button className="btn ghost" disabled={code.length !== 5} onClick={joinCode}>Join</button>
+              </div>
+            </div>
+            {invited && <button className="btn link" onClick={deploy}>Quick play instead</button>}
+            {errorText && <p className="err" role="alert">{errorText}</p>}
+          </div>
+        </section>
 
       <aside className="panel">
         <nav className="tabs">
@@ -151,6 +156,7 @@ function Lobby({ onDeploy }: { onDeploy: (url: string, name: string, join: JoinR
           {tab === "how" && <HowTo />}
         </div>
       </aside>
+      </div>
     </main>
   );
 }
@@ -291,7 +297,7 @@ function Cosmetics({ me, onChange }: { me: Me; onChange: () => void }) {
       </ul>
       {!cosmeticsAddr && <p className="hint">On-chain minting opens once the contracts are deployed to Base Sepolia.</p>}
       {msg && <p className="hint">{msg}</p>}
-      <p className="hint">Signed in as {shortAddr(me.account.wallet)} · server {httpBase()}</p>
+      <p className="hint">Signed in as {shortAddr(me.account.wallet)}</p>
     </div>
   );
 }

@@ -7,7 +7,8 @@ export const DEFAULT_SERVER = import.meta.env.VITE_SERVER_URL || `ws://${locatio
 
 export function serverUrl(): string {
   const p = new URLSearchParams(location.search).get("server");
-  return p || localStorage.getItem("arena.server") || DEFAULT_SERVER;
+  // ?server=wss://… points this page at another match server (development and testing only).
+  return p || DEFAULT_SERVER;
 }
 /** ws://host:port/ws -> http://host:port */
 export function httpBase(ws = serverUrl()): string {
