@@ -69,8 +69,8 @@ async fn fair_fight_ends_in_a_server_decided_kill() {
         r.teleport(ida, Vec3::new(0.0, 0.0, 10.0), 0.0); // looking toward -Z
         r.teleport(idb, Vec3::new(0.0, 0.0, 0.0), std::f32::consts::PI);
     }
-    // Aim at B's chest: eye height 1.6 -> chest 1.0 over 10 m.
-    let pitch = ((1.0_f32 - 1.6) / 10.0).atan();
+    // Aim at B's chest (1.0 m) from eye height over 10 m.
+    let pitch = ((1.0_f32 - game_core::EYE_HEIGHT) / 10.0).atan();
     let mut seq = 0u32;
     let mut view_tick = 0u32;
     let mut killed = None;
@@ -92,7 +92,8 @@ async fn fair_fight_ends_in_a_server_decided_kill() {
         }
     }
     assert_eq!(killed, Some((ida, idb)), "A should kill B");
-    assert_eq!(hits, 4, "4 body shots x 25 damage = 100");
+    let body = game_core::RIFLE.damage_at(10.0, false);
+    assert_eq!(hits, (100.0 / body).ceil() as u32, "{body} damage per body shot at 10 m");
     // B's client heard about it too, from the server.
     let b_msgs = drain(&mut b).await;
     assert!(b_msgs.iter().any(|m| matches!(m, ServerMsg::Kill { killer, victim, .. } if *killer == ida && *victim == idb)));

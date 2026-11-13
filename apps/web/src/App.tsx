@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useState } from "react";
 import { client, type JoinRequest } from "./client";
 import { DEFAULT_ROOM } from "./protocol";
 import { GameView } from "./GameView";
+import { SettingsPanel } from "./ui/SettingsPanel";
 import { api, hasWallet, mintOnChain, serverUrl, session, shortAddr, signInWithWallet, type BoardRow, type ChainInfo, type Item, type Me } from "./api";
 
 function useClient() {
@@ -86,6 +87,7 @@ function Lobby({ onDeploy }: { onDeploy: (url: string, name: string, join: JoinR
   };
   const deploy = () => go({ kind: "quick" });
 
+  const [showSettings, setShowSettings] = useState(false);
   const joinCode = () => code.length === 5 && go({ kind: "code", code });
   const errorText = err || (c.error ? "Couldn't reach the match server. If nobody has played for a while it needs about a minute to wake up — try again shortly." : "");
 
@@ -94,6 +96,7 @@ function Lobby({ onDeploy }: { onDeploy: (url: string, name: string, join: JoinR
       <header className="lobby-top">
         <p className="eyebrow"><span className="tag-b">B4</span>Port Authority Breach Unit</p>
         <div className="account">
+          <button className="btn ghost small" onClick={() => setShowSettings(true)}>Settings</button>
           {me ? (
             <div className="who">
               <b>{me.account.callsign || shortAddr(me.account.wallet)}</b>
@@ -157,6 +160,7 @@ function Lobby({ onDeploy }: { onDeploy: (url: string, name: string, join: JoinR
         </div>
       </aside>
       </div>
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
     </main>
   );
 }

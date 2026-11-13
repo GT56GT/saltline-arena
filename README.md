@@ -21,8 +21,8 @@ cd apps/web && npm install && npm run dev                # http://localhost:5173
 Open the page in two browser windows (or on two machines on the same network, using
 `http://<your-ip>:5173` and server `ws://<your-ip>:8790/ws`) and fight.
 
-Controls: WASD move · mouse aim · LMB fire · RMB aim down sights · Shift sprint · Space jump · C crouch ·
-R reload · Tab scores. Touch and gamepad work too (the original game's input system).
+Controls: WASD move · mouse aim · LMB fire · RMB aim down sights · Shift sprint · Space jump (facing a
+ledge up to one container high: climb) · C crouch · R reload · Tab scores · Esc menu and settings. Touch and gamepad work too (the original game's input system).
 Renderer quality: add `?q=low|medium|high` to the page URL.
 
 ## Tests
@@ -41,6 +41,17 @@ node e2e/visual.cjs <dir>                # screenshots (server on 8790 with bots
 - The browser runs the same `game-core` compiled to WebAssembly to predict its own movement instantly,
   then reconciles with each server snapshot. Other players are drawn 100 ms in the past, smoothly.
 - Rebuild the WASM after changing `game-core`: `cd apps/web && npm run wasm` (needs `wasm-pack`).
+
+## Combat rules (server-side, `game-core`)
+- PAC-9: 18 damage, ×1.75 to the head, full damage to 25 m then down to 65% at 60 m — six body
+  shots or four headshots up close. Hosts can scale damage (60–125%) in private rooms.
+- Health regenerates (25/s) after 4 s without taking damage. Bots react slower and aim looser.
+- Climbing: jump facing a ledge 0.6–2.75 m above your feet with room on top (single containers,
+  not double stacks). ~0.5 s, no shooting meanwhile; deterministic, so prediction matches the server.
+
+## Settings
+Esc → Settings (or the lobby's Settings): sensitivity, invert, FOV, quality, master/effects/ambience
+volume, and music in matches (off by default so footsteps are clear). Saved per device.
 
 ## Playing with friends (private rooms)
 - **Create room** in the lobby: you are the host and get a 5-letter code; the address bar (`?room=CODE`)

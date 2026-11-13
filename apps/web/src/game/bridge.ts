@@ -13,6 +13,7 @@ import type { V3 } from "../protocol";
 import { COSMETICS } from "../cosmetics";
 import { Avatar, makeKit, type Kit } from "./avatar";
 import { Operator, loadOperatorKit, type OperatorKit } from "./operator";
+import { getSettings, onSettings, type Settings } from "../settings";
 
 const RESERVE = 90;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -126,7 +127,6 @@ export function attachRenderer(win: any, client: GameClient): () => void {
         const k = e.killer === client.id ? "You" : e.killerName;
         const vname = e.victim === client.id ? "you" : e.victimName;
         H.feed(`<b>${esc(k)}</b> ${e.head ? "headshot " : ""}&#9656; ${esc(vname)}`);
-        if (e.victim === client.id) H.message(`Taken down by ${e.killerName}`, 3);
         break;
       }
       case "joined":
@@ -163,15 +163,88 @@ export function attachRenderer(win: any, client: GameClient): () => void {
     if (k) k.textContent = "Free for all";
   };
 
+  // ------------------------------------------------------------------ settings, applied live
+  const applySettings = (st: Settings) => {
+    try {
+      I.sensitivity = st.sens;
+      I.invertY = st.invertY;
+      P.setFov && P.setFov(st.fov);
+      const A = G.audio;
+      if (A) {
+        A.setVolume && A.setVolume(st.master);
+        if (A.setBus) {
+          A.setBus("music", st.music);
+          A.setBus("amb", st.ambience);
+          for (const b of ["world", "near", "dry"]) A.setBus(b, st.effects);
+        }
+      }
+      const Q = G.QUALITY;
+      if (st.quality !== "auto" && Q && Q[st.quality] && G.render && G.render.setQuality && (!G.quality || G.quality.name !== st.quality)) {
+        G.render.setQuality({ ...Q[st.quality] });
+      }
+    } catch (e) {
+      console.warn("[arena] settings", e);
+    }
+  };
+  applySettings(getSettings());
+  offs.push(onSettings(applySettings));
+
   // ------------------------------------------------------------------ per-frame hooks
+  let climbing = false;
   G.arenaMove = (C: any) => {
     const p = client.smoothPos();
     C.pos.set(p[0], p[1], p[2]);
     const vel = client.predictedVel();
     C.vel.set(vel[0], vel[1], vel[2]);
     C.health = client.me.hp;
+    // Climbing: the rifle drops to its sprint pose while the hands are busy.
+    if (client.climbing) C.sprinting = true;
     return { onGround: client.predictedOnGround() };
   };
+
+  // Footsteps of other players, from where they are, on what they walk on.
+  const STEP: Record<string, string> = { metal: "step_metal", water: "step_water" };
+  const footstep = (a: Avatar | Operator) => {
+    const pose = a.pose;
+    if (!pose || !pose.alive || pose.climb) return;
+    const sp = a.groundSpeed;
+    if (sp < 0.8) return;
+    const [x, y, z] = pose.pos;
+    let surface = "concrete";
+    try {
+      surface = G.level && G.level.groundSurfaceAt ? G.level.groundSurfaceAt(x, z) || "concrete" : "concrete";
+      if (G.ground && G.ground.isPuddle && G.ground.isPuddle(x, z)) surface = "water";
+    } catch { /* */ }
+    // Sprinting is loud, walking is clear, crouch-walking is nearly silent.
+    const gain = pose.crouch ? 0.18 : sp > 5 ? 1.0 : 0.62;
+    try {
+      G.audio.play(STEP[surface] || "step_concrete", { pos: new T.Vector3(x, y + 0.05, z), gain, pitch: sp > 5 ? 1.05 : 1, jitter: 0.08 });
+    } catch { /* */ }
+  };
+  const stepsHeard = new Map<number, number>();
+
+  // Names: teammates always; enemies when under the crosshair (or always, in settings).
+  let aimedId = -1;
+  let aimedUntil = 0;
+  const fwd = new T.Vector3();
+  const findAimed = (now: number) => {
+    G.camera.getWorldDirection(fwd);
+    const o = G.camera.position;
+    let best: { id: number; dist: number } | null = null;
+    for (const [id, a] of avatars) {
+      const h: { dist: number } | null = a.raycast(o, fwd, best ? best.dist : 120);
+      if (h) best = { id, dist: h.dist };
+    }
+    if (best) {
+      const wall = G.physics && G.physics.raycast ? G.physics.raycast(o, fwd, best.dist) : null;
+      if (!wall || wall.dist >= best.dist - 0.05) {
+        aimedId = best.id;
+        aimedUntil = now + 900;
+      }
+    }
+    if (now > aimedUntil) aimedId = -1;
+  };
+
 
   const camPos = new T.Vector3();
   // The game clamps its frame step to 50 ms; the network clock must follow real time instead,
@@ -204,7 +277,7 @@ export function attachRenderer(win: any, client: GameClient): () => void {
       mz: +I.move.y || 0,
       sprint: !!I.sprint,
       crouch: !!I.crouch,
-      fire: !!I.fire && locked && W.root.visible,
+      fire: !!I.fire && locked && W.root.visible && !client.climbing,
     };
     if (I.pressed && I.pressed("jump")) client.queueJump();
     client.yaw = P.yaw;
@@ -213,6 +286,11 @@ export function attachRenderer(win: any, client: GameClient): () => void {
     client.frame((nowReal - lastReal) / 1000);
     lastReal = nowReal;
     P.health = client.me.hp;
+    // Climb start and finish: grab the ledge, then a soft landing on top.
+    if (client.climbing !== climbing) {
+      climbing = client.climbing;
+      try { G.audio.play("land", { gain: climbing ? 0.45 : 0.6, pitch: climbing ? 1.25 : 0.95 }); } catch { /* */ }
+    }
 
     // Ammo and reloads: the first-person rifle animates locally; the server's count wins when idle.
     W.reserve = RESERVE;
@@ -222,6 +300,8 @@ export function attachRenderer(win: any, client: GameClient): () => void {
 
     // Other players.
     camPos.copy(G.camera.position);
+    const st = getSettings();
+    findAimed(now);
     const seen = new Set<number>();
     for (const r of client.remotes.values()) {
       seen.add(r.id);
@@ -235,10 +315,16 @@ export function attachRenderer(win: any, client: GameClient): () => void {
       const look = r.cosmetic ? COSMETICS[r.cosmetic] ?? null : null;
       const teams = !!client.room && client.room.config.teams;
       a.setLook(r.cosmetic, look, teams && r.team != null ? TEAM_COLORS[r.team] : null, teams && r.team != null && r.team === client.me.team);
+      const ally = teams && r.team != null && r.team === client.me.team;
+      a.tagWanted = ally || st.names === "always" || r.id === aimedId;
       const pose = client.remotePose(r, now);
       if (pose) a.update(pose, dt, camPos);
+      if (a.steps !== stepsHeard.get(r.id)) {
+        if (stepsHeard.has(r.id)) footstep(a);
+        stepsHeard.set(r.id, a.steps);
+      }
     }
-    for (const [id, a] of avatars) if (!seen.has(id)) { a.dispose(); avatars.delete(id); }
+    for (const [id, a] of avatars) if (!seen.has(id)) { a.dispose(); avatars.delete(id); stepsHeard.delete(id); }
 
     // Match panel (the original objective slot).
     let leader = { name: "", kills: -1 };

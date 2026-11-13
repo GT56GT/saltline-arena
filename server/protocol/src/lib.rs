@@ -30,6 +30,12 @@ pub struct RoomConfig {
     pub kill_target: u32,
     #[serde(default = "default_minutes")]
     pub minutes: u32,
+    /// Weapon damage in percent of normal (host's "damage" setting): 50..=150.
+    #[serde(default = "default_damage")]
+    pub damage: u32,
+}
+fn default_damage() -> u32 {
+    100
 }
 fn default_kills() -> u32 {
     30
@@ -39,7 +45,7 @@ fn default_minutes() -> u32 {
 }
 impl Default for RoomConfig {
     fn default() -> Self {
-        Self { teams: true, bots: 0, balance_bots: false, replace_leavers: false, friendly_fire: false, kill_target: 30, minutes: 8 }
+        Self { teams: true, bots: 0, balance_bots: false, replace_leavers: false, friendly_fire: false, kill_target: 30, minutes: 8, damage: 100 }
     }
 }
 impl RoomConfig {
@@ -48,6 +54,7 @@ impl RoomConfig {
         self.bots = self.bots.min(7);
         self.kill_target = self.kill_target.clamp(5, 100);
         self.minutes = self.minutes.clamp(2, 30);
+        self.damage = self.damage.clamp(50, 150);
         self
     }
 }
@@ -100,6 +107,9 @@ pub struct PlayerSnap {
     /// Team (0 or 1) in a team room.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<u8>,
+    /// Climbing a ledge: [from x y z, to x y z, seconds in, total seconds].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mantle: Option<[f32; 8]>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

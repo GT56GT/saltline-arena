@@ -13,14 +13,18 @@ export interface PlayerSnap {
   id: PlayerId; name: string; pos: V3; vel: V3; yaw: number; pitch: number;
   crouch: boolean; hp: number; alive: boolean; kills: number; deaths: number;
   bot?: boolean; cosmetic?: string | null; team?: number;
+  /** Climbing: [from x y z, to x y z, seconds in, total seconds]. */
+  mantle?: number[];
 }
 
 /** Private room settings (host only, before the match). Mirrors protocol::RoomConfig. */
 export interface RoomConfig {
   teams: boolean; bots: number; balance_bots: boolean; replace_leavers: boolean;
   friendly_fire: boolean; kill_target: number; minutes: number;
+  /** Weapon damage, percent of normal (50..150). */
+  damage: number;
 }
-export const DEFAULT_ROOM: RoomConfig = { teams: true, bots: 0, balance_bots: false, replace_leavers: false, friendly_fire: false, kill_target: 30, minutes: 8 };
+export const DEFAULT_ROOM: RoomConfig = { teams: true, bots: 0, balance_bots: false, replace_leavers: false, friendly_fire: false, kill_target: 30, minutes: 8, damage: 100 };
 export interface RoomState { code: string; host: PlayerId; live: boolean; config: RoomConfig }
 
 export type ServerMsg =

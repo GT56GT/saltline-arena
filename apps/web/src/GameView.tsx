@@ -1,6 +1,8 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { client, TEAM_COLORS, TEAM_NAMES, type JoinRequest } from "./client";
 import type { RoomConfig } from "./protocol";
+import { Matchmaking, MatchEvents, PauseMenu } from "./ui/MatchUI";
+import { SettingsPanel } from "./ui/SettingsPanel";
 import { attachRenderer } from "./game/bridge";
 
 /**
@@ -11,6 +13,8 @@ import { attachRenderer } from "./game/bridge";
 export function GameView({ url, name, join, onLeave }: { url: string; name: string; join: JoinRequest; onLeave: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [inMatch, setInMatch] = useState(false);
   // Renderer options pass straight through (?q=low|medium|high for quality, ?noaudio=1).
   const [src] = useState(() => {
     const qs = new URLSearchParams(location.search);
@@ -24,7 +28,13 @@ export function GameView({ url, name, join, onLeave }: { url: string; name: stri
     const iv = window.setInterval(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const w = f.contentWindow as any;
+      // Loading progress from the renderer's own boot bar (shown on our matchmaking card).
+      try {
+        const fill = w && w.document && w.document.getElementById("boot-fill");
+        if (fill) setProgress(Math.min(1, (parseFloat(fill.style.width) || 0) / 100));
+      } catch { /* */ }
       if (!w || !w.__ready || !w.__G || !w.__G.game) return;
+      setProgress(1);
       window.clearInterval(iv);
       detach = attachRenderer(w, client);
       setReady(true);
@@ -39,10 +49,20 @@ export function GameView({ url, name, join, onLeave }: { url: string; name: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, name]);
 
+  // The matchmaking card stays up until we are placed in the match, then shows "Match found".
+  const c = useClient();
+  const placed = c.status === "playing" && c.hasSelf;
+  useEffect(() => {
+    if (!placed) return;
+    const t = window.setTimeout(() => setInMatch(true), 1300);
+    return () => window.clearTimeout(t);
+  }, [placed]);
   return (
     <>
       <iframe ref={frame} className="game-frame" src={src} title="Saltline Arena" allow="fullscreen; autoplay; gamepad" />
-      {ready && <Overlay onLeave={onLeave} />}
+      {ready && inMatch && <Overlay onLeave={onLeave} />}
+      {!inMatch && c.status !== "closed" && <Matchmaking join={join} progress={progress} onCancel={onLeave} />}
+      {!inMatch && c.status === "closed" && <Overlay onLeave={onLeave} />}
     </>
   );
 }
@@ -78,9 +98,14 @@ function Overlay({ onLeave }: { onLeave: () => void }) {
     };
   }, [code]);
   const now = performance.now();
-  const banner = now - c.banner.t < 5000 ? c.banner.text : "";
   const result = c.result && now - c.result.t < 9000 ? c.result : null;
-  const me = c.me;
+  const [settings, setSettings] = useState(false);
+  const [roomOpen, setRoomOpen] = useState(true);
+  // Until the player has clicked into the game once, show "click to play" rather than the menu.
+  const [engaged, setEngaged] = useState(false);
+  useEffect(() => {
+    if (c.locked && !engaged) setEngaged(true);
+  }, [c.locked, engaged]);
 
   if (c.status === "closed" || c.status === "idle") {
     return (
@@ -95,14 +120,7 @@ function Overlay({ onLeave }: { onLeave: () => void }) {
   }
   return (
     <div className="hud">
-      {c.status === "connecting" && <div className="joining">Joining the match…</div>}
-      {c.status === "playing" && !me.alive && (
-        <div className="dead">
-          <b>Down</b>
-          <span>Redeploying in 3 seconds</span>
-        </div>
-      )}
-      {banner && <div className="banner">{banner}</div>}
+      <MatchEvents />
       {result && (
         <div className="result">
           <span className="k">Match recorded · signed by the server</span>
@@ -112,14 +130,26 @@ function Overlay({ onLeave }: { onLeave: () => void }) {
           <span>Rating {Math.round(result.me.stats.rating)}</span>
         </div>
       )}
-      {c.room && c.status === "playing" && !c.locked && <RoomPanel />}
-      {c.room && !c.room.live && c.locked && <div className="warmup-tag">Warm-up · Esc for the room panel</div>}
-      {!c.locked && c.status === "playing" && (
-        <div className="leave">
-          <span>Tab · scoreboard</span>
-          <button className="btn ghost" onClick={onLeave}>Leave match</button>
+      {c.room && !c.room.live && c.locked && <div className="warmup-tag">Warm-up · Esc for the menu</div>}
+      {!c.locked && c.status === "playing" && !engaged && (
+        <div className="click-to-play">
+          <b>Click to play</b>
+          <span>Esc opens the menu · Tab shows the scoreboard</span>
         </div>
       )}
+      {!c.locked && c.status === "playing" && engaged && (
+        <>
+          <div className="pause-dim" />
+          <PauseMenu
+            onSettings={() => setSettings(true)}
+            onLeave={onLeave}
+            roomOpen={roomOpen}
+            onRoom={c.room ? () => setRoomOpen((v) => !v) : null}
+          />
+          {c.room && roomOpen && <RoomPanel />}
+        </>
+      )}
+      {settings && <SettingsPanel onClose={() => setSettings(false)} />}
       {c.keys.has("Tab") && (
         <div className="scores">
           <p className="k">Scoreboard · first to {c.killTarget}{c.rtt ? ` · ${c.rtt} ms` : ""}</p>
@@ -219,6 +249,11 @@ function RoomPanel() {
             <label className="sel">Kills to win
               <select value={cfg.kill_target} onChange={(e) => set({ kill_target: +e.target.value })}>
                 {[10, 20, 30, 50, 75].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+            <label className="sel">Damage
+              <select value={cfg.damage ?? 100} onChange={(e) => set({ damage: +e.target.value })}>
+                {[[60, "Low"], [80, "Reduced"], [100, "Normal"], [125, "High"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
             </label>
             <label className="sel">Time limit

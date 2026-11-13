@@ -11,6 +11,7 @@ export class Predictor {
     crouching(): boolean;
     eye_y(): number;
     last_error(): number;
+    mantling(): boolean;
     /**
      * `map_json` is the `map` field of the server's Welcome message.
      */
@@ -24,7 +25,7 @@ export class Predictor {
     /**
      * Adopt the server's state for this player, then replay inputs it has not processed yet.
      */
-    reconcile(ack: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, crouch: boolean, alive: boolean): void;
+    reconcile(ack: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, crouch: boolean, alive: boolean, mantle?: Float32Array | number[] | null): void;
     speed(): number;
     vx(): number;
     vy(): number;
@@ -43,11 +44,12 @@ export interface InitOutput {
     readonly predictor_crouching: (a: number) => number;
     readonly predictor_eye_y: (a: number) => number;
     readonly predictor_last_error: (a: number) => number;
+    readonly predictor_mantling: (a: number) => number;
     readonly predictor_new: (a: number, b: number) => [number, number, number];
     readonly predictor_on_ground: (a: number) => number;
     readonly predictor_pending: (a: number) => number;
     readonly predictor_raycast: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => number;
-    readonly predictor_reconcile: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+    readonly predictor_reconcile: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
     readonly predictor_speed: (a: number) => number;
     readonly predictor_vx: (a: number) => number;
     readonly predictor_vy: (a: number) => number;

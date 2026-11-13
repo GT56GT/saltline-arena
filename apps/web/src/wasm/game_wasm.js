@@ -48,6 +48,13 @@ export class Predictor {
         return ret;
     }
     /**
+     * @returns {boolean}
+     */
+    mantling() {
+        const ret = wasm.predictor_mantling(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
      * `map_json` is the `map` field of the server's Welcome message.
      * @param {string} map_json
      */
@@ -102,9 +109,21 @@ export class Predictor {
      * @param {number} vz
      * @param {boolean} crouch
      * @param {boolean} alive
+     * @param {Float32Array | number[] | null} [mantle]
      */
-    reconcile(ack, x, y, z, vx, vy, vz, crouch, alive) {
-        wasm.predictor_reconcile(this.__wbg_ptr, ack, x, y, z, vx, vy, vz, crouch, alive);
+    reconcile(ack, x, y, z, vx, vy, vz, crouch, alive, mantle) {
+        const val2 = +ack;
+        const val3 = +x;
+        const val4 = +y;
+        const val5 = +z;
+        const val6 = +vx;
+        const val7 = +vy;
+        const val8 = +vz;
+        const val9 = +crouch;
+        const val10 = +alive;
+        var ptr0 = isLikeNone(mantle) ? 0 : passArrayF32ToWasm0(mantle, wasm.__wbindgen_malloc);
+        var len0 = WASM_VECTOR_LEN;
+        wasm.predictor_reconcile(this.__wbg_ptr, val2, val3, val4, val5, val6, val7, val8, val9, val10, ptr0, len0);
     }
     /**
      * @returns {number}
@@ -187,6 +206,14 @@ const PredictorFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_predictor_free(ptr, 1));
 
+let cachedFloat32ArrayMemory0 = null;
+function getFloat32ArrayMemory0() {
+    if (cachedFloat32ArrayMemory0 === null || cachedFloat32ArrayMemory0.byteLength === 0) {
+        cachedFloat32ArrayMemory0 = new Float32Array(wasm.memory.buffer);
+    }
+    return cachedFloat32ArrayMemory0;
+}
+
 function getStringFromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return decodeText(getUint8ArrayMemory0().subarray(ptr, ptr + len));
@@ -198,6 +225,17 @@ function getUint8ArrayMemory0() {
         cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
     }
     return cachedUint8ArrayMemory0;
+}
+
+function isLikeNone(x) {
+    return x === undefined || x === null;
+}
+
+function passArrayF32ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 4, 4) >>> 0;
+    getFloat32ArrayMemory0().set(arg, ptr / 4);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {
@@ -277,6 +315,7 @@ function __wbg_finalize_init(instance, module) {
     wasmInstance = instance;
     wasm = instance.exports;
     wasmModule = module;
+    cachedFloat32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
     return wasm;

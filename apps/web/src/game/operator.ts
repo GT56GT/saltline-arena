@@ -88,6 +88,14 @@ interface Rig { bone: any; rest: any; parentRest: any; parentRestInv: any }
 export class Operator {
   root: any;
   pose: AvatarPose | null = null;
+  private speedNow = 0;
+  /** Footfalls so far (the bridge plays a step sound for each new one). */
+  steps = 0;
+  private lastFoot = 0;
+  /** Whether the name tag should show (bridge decides: teammate, or under the crosshair). */
+  tagWanted = true;
+  /** Current speed over the ground, m/s (footstep loudness). */
+  get groundSpeed() { return this.speedNow; }
   bodyHeight = STAND_HEIGHT;
   private T: any;
   private k: OperatorKit;
@@ -105,6 +113,7 @@ export class Operator {
   // animation state
   private phase = 0;
   private crouchK = 0;
+  private climbK = 0;
   private lastPos: any;
   private speed = 0;
   private moveAngle = 0;
@@ -281,6 +290,7 @@ export class Operator {
     this.lastPos.copy(p);
     const sp = teleport ? 0 : Math.hypot(vx, vz);
     this.speed = damp(this.speed, sp, 10, dt);
+    this.speedNow = this.speed;
     let back = false;
     if (sp > 0.3 && !teleport) {
       const fx = -Math.sin(pose.yaw), fz = -Math.cos(pose.yaw);
@@ -292,11 +302,18 @@ export class Operator {
       this.moveAngle = damp(this.moveAngle, back ? -ang : ang, 8, dt);
       const stride = this.speed > 5 ? 2.2 : 1.6;
       this.phase += ((back ? -1 : 1) * this.speed * dt) / stride;
+      // One footfall per half stride cycle (each foot), for footstep sounds.
+      const foot = Math.floor(this.phase * 2);
+      if (foot !== this.lastFoot) {
+        this.lastFoot = foot;
+        this.steps++;
+      }
     } else {
       this.moveAngle = damp(this.moveAngle, 0, 6, dt);
       this.phase = damp(this.phase, Math.round(this.phase * 2) / 2, 6, dt);
     }
     this.crouchK = damp(this.crouchK, pose.crouch ? 1 : 0, 12, dt);
+    this.climbK = damp(this.climbK, pose.climb ? 1 : 0, 14, dt);
     this.bodyHeight = lerp(STAND_HEIGHT, CROUCH_HEIGHT, this.crouchK);
 
     const run = Math.min(1, this.speed / 3.8);
@@ -313,15 +330,21 @@ export class Operator {
       const lift = Math.max(0, Math.sin(ph - 0.6)) * (0.85 + 0.5 * sprint) * run;
       const crouchHip = i === 0 ? 1.15 : 0.55;
       const crouchKnee = i === 0 ? 1.95 : 1.6;
-      this.setBone(`${side}UpLeg`, this.axis(1, 0, 0, lerp(swing, crouchHip, ck)));
-      this.setBone(`${side}Leg`, this.axis(1, 0, 0, -lerp(lift, crouchKnee, ck)));
+      // Climbing: lead knee driven up onto the ledge, the other leg pushing off.
+      const climbHip = i === 0 ? 1.45 : 0.35;
+      const climbKnee = i === 0 ? 1.9 : 0.5;
+      const hip = lerp(lerp(swing, crouchHip, ck), climbHip, this.climbK);
+      const knee = lerp(lerp(lift, crouchKnee, ck), climbKnee, this.climbK);
+      this.setBone(`${side}UpLeg`, this.axis(1, 0, 0, hip));
+      this.setBone(`${side}Leg`, this.axis(1, 0, 0, -knee));
     }
 
     // --- upper body: line the rifle's barrel up with the aim, spread over the three spine bones.
     const pitch = Math.max(-1.25, Math.min(1.25, pose.pitch));
     const kick = Math.max(0, 1 - this.fireT / 0.09);
     this.fireT += dt;
-    const lowReady = sprint * 0.6;
+    // Rifle drops to low ready when sprinting, and hangs while climbing.
+    const lowReady = Math.max(sprint * 0.6, this.climbK * 1.0);
     const aim = this.v1.set(0, Math.sin(pitch - lowReady + 0.06 * kick), -Math.cos(pitch - lowReady + 0.06 * kick)).normalize();
     const R = new T.Quaternion().setFromUnitVectors(this.k.barrel, aim);
     // Undo the hips' strafe turn for the upper body, then split what is left between the bones.
@@ -339,12 +362,14 @@ export class Operator {
     // --- place: feet on the ground (stance foot planted), facing the aim yaw.
     r.position.copy(p);
     r.rotation.set(0, pose.yaw, 0, "YXZ");
+    // Feet stay planted on the ground (hips bob, crouches sink) — except mid-climb, where the
+    // server's climb path already carries the body up the ledge.
     const footNow = this.footY();
-    r.position.y = p.y + (this.restFootY - footNow);
+    r.position.y = p.y + (this.restFootY - footNow) * (1 - this.climbK);
 
     if (camPos) {
       const d = camPos.distanceTo(p);
-      this.tag.visible = d < 38;
+      this.tag.visible = this.tagWanted && d < 60;
       const s = Math.max(0.7, Math.min(1.5, d / 14));
       this.tag.scale.set(0.8 * s, 0.2 * s, 1);
       this.tag.position.y = this.bodyHeight + 0.18 + 0.1 * s;

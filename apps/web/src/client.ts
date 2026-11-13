@@ -13,7 +13,7 @@ export const INTERP_MS = 100;
 
 let wasmReady: Promise<unknown> | null = null;
 
-interface Pose { t: number; pos: V3; yaw: number; pitch: number; crouch: boolean; alive: boolean }
+interface Pose { t: number; pos: V3; yaw: number; pitch: number; crouch: boolean; alive: boolean; climb: boolean }
 export interface Remote { id: PlayerId; name: string; buf: Pose[]; hp: number; alive: boolean; kills: number; deaths: number; firedAt: number; bot: boolean; cosmetic: string | null; team: number | null }
 /** How to enter: public matchmaking, a new private room (we host), or a room code. */
 export type JoinRequest = { kind: "quick" } | { kind: "create"; config: RoomConfig } | { kind: "code"; code: string };
@@ -27,7 +27,7 @@ export type ClientEvent =
   | { t: "kill"; killer: PlayerId; victim: PlayerId; head: boolean; killerName: string; victimName: string }
   | { t: "joined"; name: string }
   | { t: "left"; name: string }
-  | { t: "match_end"; winner: PlayerId | null; text: string }
+  | { t: "match_end"; winner: PlayerId | null; text: string; scores: [PlayerId, number, number][]; winnerTeam: number | null; teamScores: [number, number] | null }
   | { t: "room" };
 /** What the player is asking to do this frame (read from the original game's input system). */
 export interface ControlState { mx: number; mz: number; sprint: boolean; crouch: boolean; fire: boolean }
@@ -213,6 +213,10 @@ export class GameClient {
     const p = this.predictor;
     return p ? [p.vx(), p.vy(), p.vz()] : [0, 0, 0];
   }
+  /** Climbing a ledge right now (prediction). */
+  get climbing() {
+    return !!this.predictor && this.predictor.mantling();
+  }
   predictedOnGround() {
     return this.predictor ? this.predictor.on_ground() : true;
   }
@@ -226,11 +230,21 @@ export class GameClient {
     this.feed = [...this.feed.slice(-4), { id: ++this.feedId, text, mine, t: performance.now() }];
   }
 
+  private uiListeners = new Set<(e: ClientEvent) => void>();
+  /** Match UI (score popups, medals, end screen) listens here; the renderer uses `onEvent`. */
+  listen(f: (e: ClientEvent) => void): () => void {
+    this.uiListeners.add(f);
+    return () => this.uiListeners.delete(f);
+  }
+
   private emit(e: ClientEvent) {
-    try {
-      this.onEvent?.(e);
-    } catch (err) {
-      console.error("[client] event handler", err);
+    for (const f of [this.onEvent, ...this.uiListeners]) {
+      if (!f) continue;
+      try {
+        f(e);
+      } catch (err) {
+        console.error("[client] event handler", err);
+      }
     }
   }
 
@@ -302,7 +316,7 @@ export class GameClient {
             : w == null ? "Match over" : w === this.id ? "You win the match" : `${this.nameOf(w)} wins the match`,
           t: now,
         };
-        this.emit({ t: "match_end", winner: w, text: this.banner.text });
+        this.emit({ t: "match_end", winner: w, text: this.banner.text, scores: m.scores, winnerTeam: m.winner_team ?? null, teamScores: m.team_scores ?? null });
         this.notify();
         // Rating changes are computed after the match is recorded; fetch them shortly after.
         if (session.token && this.profile) {
@@ -340,7 +354,7 @@ export class GameClient {
     const wasAlive = this.me.alive;
     Object.assign(this.me, { hp: s.hp, alive: s.alive, kills: s.kills, deaths: s.deaths, team: s.team ?? null });
     const p = this.predictor!;
-    p.reconcile(ack, s.pos[0], s.pos[1], s.pos[2], s.vel[0], s.vel[1], s.vel[2], s.crouch, s.alive);
+    p.reconcile(ack, s.pos[0], s.pos[1], s.pos[2], s.vel[0], s.vel[1], s.vel[2], s.crouch, s.alive, s.mantle ?? null);
     const c: V3 = [p.x(), p.y(), p.z()];
     // The first snapshot and every respawn are teleports: snap and face where the server put us.
     if (!this.hasSelf || (!wasAlive && s.alive) || (this.snapNext && s.alive)) {
@@ -361,7 +375,7 @@ export class GameClient {
       r = { id: s.id, name: s.name, buf: [], hp: 100, alive: true, kills: 0, deaths: 0, firedAt: 0, bot: !!s.bot, cosmetic: s.cosmetic ?? null, team: s.team ?? null };
       this.remotes.set(s.id, r);
     }
-    r.buf.push({ t: now, pos: s.pos, yaw: s.yaw, pitch: s.pitch, crouch: s.crouch, alive: s.alive });
+    r.buf.push({ t: now, pos: s.pos, yaw: s.yaw, pitch: s.pitch, crouch: s.crouch, alive: s.alive, climb: !!s.mantle });
     if (r.buf.length > 20) r.buf.shift();
     Object.assign(r, { hp: s.hp, alive: s.alive, kills: s.kills, deaths: s.deaths, name: s.name, bot: !!s.bot, cosmetic: s.cosmetic ?? null, team: s.team ?? null });
   }
@@ -385,6 +399,7 @@ export class GameClient {
       pitch: A.pitch + (B.pitch - A.pitch) * k,
       crouch: B.crouch,
       alive: B.alive,
+      climb: B.climb || A.climb,
     };
   }
 

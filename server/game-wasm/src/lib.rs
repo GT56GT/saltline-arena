@@ -43,7 +43,7 @@ impl Predictor {
 
     /// Adopt the server's state for this player, then replay inputs it has not processed yet.
     #[allow(clippy::too_many_arguments)]
-    pub fn reconcile(&mut self, ack: u32, x: f32, y: f32, z: f32, vx: f32, vy: f32, vz: f32, crouch: bool, alive: bool) {
+    pub fn reconcile(&mut self, ack: u32, x: f32, y: f32, z: f32, vx: f32, vy: f32, vz: f32, crouch: bool, alive: bool, mantle: Option<Vec<f32>>) {
         let before = self.state.pos;
         while self.pending.front().is_some_and(|i| i.seq <= ack) {
             self.pending.pop_front();
@@ -52,6 +52,12 @@ impl Predictor {
         self.state.vel = Vec3::new(vx, vy, vz);
         self.state.crouching = crouch;
         self.state.alive = alive;
+        self.state.mantle = mantle.filter(|m| m.len() == 8).map(|m| game_core::Mantle {
+            from: Vec3::new(m[0], m[1], m[2]),
+            to: Vec3::new(m[3], m[4], m[5]),
+            t: m[6],
+            dur: m[7],
+        });
         self.state.on_ground = vy.abs() < 1e-4 && (y <= 1e-3 || self.map.floor_below(self.state.pos, game_core::PLAYER_RADIUS).is_some_and(|f| (f - y).abs() < 1e-3));
         if !alive {
             self.pending.clear();
@@ -71,6 +77,7 @@ impl Predictor {
     pub fn vz(&self) -> f32 { self.state.vel.z }
     pub fn on_ground(&self) -> bool { self.state.on_ground }
     pub fn crouching(&self) -> bool { self.state.crouching }
+    pub fn mantling(&self) -> bool { self.state.mantle.is_some() }
     pub fn speed(&self) -> f32 { Vec3::new(self.state.vel.x, 0.0, self.state.vel.z).length() }
     pub fn last_error(&self) -> f32 { self.last_error }
     pub fn pending(&self) -> u32 { self.pending.len() as u32 }
@@ -99,7 +106,7 @@ mod tests {
             step_player(&mut server, &Input { seq, mz: 1.0, ..Default::default() }, &map);
         }
         let (px, pz) = (client.x(), client.z());
-        client.reconcile(6, server.pos.x, server.pos.y, server.pos.z, server.vel.x, server.vel.y, server.vel.z, false, true);
+        client.reconcile(6, server.pos.x, server.pos.y, server.pos.z, server.vel.x, server.vel.y, server.vel.z, false, true, None);
         assert!((client.x() - px).abs() < 1e-4 && (client.z() - pz).abs() < 1e-4);
         assert_eq!(client.pending(), 4);
     }

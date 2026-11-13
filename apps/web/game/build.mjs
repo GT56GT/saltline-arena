@@ -10,6 +10,7 @@
 //   - the player's position comes from the server-checked prediction, not the game's own physics,
 //   - the server decides health and death (no local fall damage, drowning or self-kill).
 // Every patch must match exactly once, so a changed bundle fails the build instead of misbehaving.
+// Also exposed for the settings menu: per-channel audio volume and the renderer's quality presets.
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +37,16 @@ const PATCHES = [
     "player: only the server can kill the player",
     'C.health<=0&&(C.alive=!1,z=0,C.sprinting=!1,i.events.emit("player:dead",{}))',
     'C.health<=0&&!i.arenaMove&&(C.alive=!1,z=0,C.sprinting=!1,i.events.emit("player:dead",{}))',
+  ],
+  [
+    "audio: per-channel volume (settings: music, ambience, effects)",
+    "Object.assign(Re,{ctx:e,resume:yr,play:ze,",
+    "Object.assign(Re,{setBus(n,v){let b=H[n];b&&(b.gain.value={world:1,near:.95,amb:.55,dry:1,music:.62}[n]*Math.max(0,Math.min(1,+v||0)))},ctx:e,resume:yr,play:ze,",
+  ],
+  [
+    "render: expose the quality presets to the settings menu",
+    "window.__G=t;",
+    "window.__G=t;t.QUALITY=Pr;",
   ],
   [
     "player: Arena can restart the death camera",

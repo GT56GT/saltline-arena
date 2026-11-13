@@ -182,3 +182,27 @@ fn quick_play_never_lands_in_a_private_room_and_bad_codes_fail() {
     assert_eq!(l.room_mut(private).unwrap().bots(), 0);
     assert!(join(&mut l, "X", JoinReq::Code("ZZZZZ".into())).is_err());
 }
+
+#[test]
+fn health_regenerates_after_a_quiet_spell_and_host_damage_setting_applies() {
+    let cfg = RoomConfig { teams: true, damage: 50, ..Default::default() };
+    let (mut l, room, [host, a, b], _rx) = three_players(cfg);
+    for (id, t) in [(host, 0), (a, 0), (b, 1)] {
+        l.room_cmd(room, id, ClientMsg::SetTeam { team: t }).unwrap();
+    }
+    l.room_cmd(room, host, ClientMsg::Start).unwrap();
+    for _ in 0..4 {
+        l.step();
+    }
+    shoot(&mut l, room, host, b);
+    let hurt = hp(&mut l, room, b);
+    assert_eq!(hurt, 100.0 - 9.0, "half damage: 18 x 50%");
+    for _ in 0..(3 * game_core::TICK_HZ) {
+        l.step();
+    }
+    assert_eq!(hp(&mut l, room, b), hurt, "no regeneration during the first seconds");
+    for _ in 0..(2 * game_core::TICK_HZ) {
+        l.step();
+    }
+    assert_eq!(hp(&mut l, room, b), 100.0, "back to full after the quiet spell");
+}

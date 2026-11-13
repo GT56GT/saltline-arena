@@ -49,6 +49,8 @@ pub struct Player {
     pub brain: Option<Brain>,
     /// Team (0 or 1) in a team room.
     pub team: Option<u8>,
+    /// Tick of the last damage taken (health regenerates after a quiet spell).
+    hurt_at: u32,
 }
 
 impl Player {
@@ -79,6 +81,10 @@ pub struct Custom {
     pub live: bool,
     pub team_kills: [u32; 2],
 }
+
+/// Seconds out of combat before health starts coming back, and how fast it returns.
+pub const REGEN_DELAY_TICKS: u32 = 4 * TICK_HZ;
+pub const REGEN_PER_SEC: f32 = 25.0;
 
 pub const BOT_NAMES: [&str; 12] = [
     "Bollard", "Tidewater", "Ballast", "Kestrel", "Spindle", "Hawser", "Gantry", "Rivet", "Cleat", "Dredge", "Marlin", "Sounder",
@@ -345,6 +351,7 @@ impl Room {
                 tx,
                 brain,
                 team,
+                hurt_at: 0,
             },
         );
         if let Some(c) = self.custom.as_mut() {
@@ -472,7 +479,7 @@ impl Room {
         // 2. Shots, judged on the server with lag compensation.
         for (shooter, inp) in fired {
             let s = self.players[&shooter].state;
-            if !s.alive || s.fire_cd > 1e-4 || s.reload_t > 0.0 || s.ammo == 0 {
+            if !s.alive || s.fire_cd > 1e-4 || s.reload_t > 0.0 || s.ammo == 0 || s.mantle.is_some() {
                 continue;
             }
             {
@@ -512,10 +519,12 @@ impl Room {
                 // Warm-up: the shot is drawn, nobody is hurt.
                 continue;
             }
-            if let Some((tid, _, head)) = best {
-                let dmg = RIFLE.damage * if head { RIFLE.head_mult } else { 1.0 };
+            if let Some((tid, dist, head)) = best {
+                let pct = self.custom.as_ref().map_or(100, |c| c.config.damage) as f32 / 100.0;
+                let dmg = (RIFLE.damage_at(dist, head) * pct * 10.0).round() / 10.0;
                 let t = self.players.get_mut(&tid).unwrap();
                 t.state.health = (t.state.health - dmg).max(0.0);
+                t.hurt_at = tick;
                 if let Some(b) = t.brain.as_mut() {
                     b.hurt_by(shooter, tick);
                 }
@@ -541,6 +550,13 @@ impl Room {
                     }
                     events.push(ServerMsg::Kill { killer: shooter, victim: tid, head });
                 }
+            }
+        }
+
+        // 3a. Health comes back after REGEN_DELAY seconds without taking damage.
+        for p in self.players.values_mut() {
+            if p.state.alive && p.state.health < game_core::MAX_HEALTH && tick.saturating_sub(p.hurt_at) >= REGEN_DELAY_TICKS {
+                p.state.health = (p.state.health + REGEN_PER_SEC * game_core::DT).min(game_core::MAX_HEALTH);
             }
         }
 
@@ -636,6 +652,7 @@ impl Room {
                 bot: p.is_bot(),
                 cosmetic: p.ident.cosmetic.clone(),
                 team: p.team,
+                mantle: p.state.mantle.map(|m| [m.from.x, m.from.y, m.from.z, m.to.x, m.to.y, m.to.z, m.t, m.dur]),
             })
             .collect();
         let team_scores = self.custom.as_ref().filter(|c| c.config.teams).map(|c| c.team_kills);

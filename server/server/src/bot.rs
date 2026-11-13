@@ -93,9 +93,10 @@ impl Brain {
                 if self.target != Some(tid) {
                     // New target: reaction time and an initial aim error, both shrinking with skill.
                     self.target = Some(tid);
-                    let react = (0.45 - 0.25 * self.skill) * TICK_HZ as f32;
+                    // Humans need ~0.25 s to react at best; bots are a bit slower so a duel is winnable.
+                    let react = (0.7 - 0.3 * self.skill) * TICK_HZ as f32;
                     self.react_until = tick + react as u32;
-                    let spread = 0.28 * (1.0 - 0.6 * self.skill);
+                    let spread = 0.34 * (1.0 - 0.5 * self.skill);
                     self.err_yaw = self.signed() * spread;
                     self.err_pitch = self.signed() * spread * 0.4;
                 }
@@ -105,8 +106,8 @@ impl Brain {
                 let want_yaw = (-d.x).atan2(-d.z);
                 let want_pitch = d.y.atan2(flat.max(0.01));
                 // Error decays as the bot tracks; a little tremor never fully goes away.
-                let decay = 0.90 - 0.06 * self.skill;
-                let tremor = 0.012 * (1.0 - self.skill) + 0.003;
+                let decay = 0.93 - 0.05 * self.skill;
+                let tremor = 0.016 * (1.0 - self.skill) + 0.005;
                 self.err_yaw = self.err_yaw * decay + self.signed() * tremor;
                 self.err_pitch = self.err_pitch * decay + self.signed() * tremor * 0.5;
                 self.yaw = want_yaw + self.err_yaw;

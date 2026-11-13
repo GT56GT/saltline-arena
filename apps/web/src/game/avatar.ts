@@ -171,7 +171,7 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const damp = (a: number, b: number, k: number, dt: number) => lerp(a, b, 1 - Math.exp(-k * dt));
 const wrapAngle = (a: number) => ((((a + Math.PI) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) - Math.PI;
 
-export interface AvatarPose { pos: [number, number, number]; yaw: number; pitch: number; crouch: boolean; alive: boolean }
+export interface AvatarPose { pos: [number, number, number]; yaw: number; pitch: number; crouch: boolean; alive: boolean; climb?: boolean }
 
 export class Avatar {
   root: any;
@@ -200,6 +200,14 @@ export class Avatar {
   private deadT = -1;
   private fireT = 9;
   pose: AvatarPose | null = null;
+  private speedNow = 0;
+  /** Footfalls so far (the bridge plays a step sound for each new one). */
+  steps = 0;
+  private lastFoot = 0;
+  /** Whether the name tag should show (bridge decides: teammate, or under the crosshair). */
+  tagWanted = true;
+  /** Current speed over the ground, m/s (footstep loudness). */
+  get groundSpeed() { return this.speedNow; }
   bodyHeight = STAND_HEIGHT;
 
   constructor(kit: Kit, name: string, doc: Document) {
@@ -453,6 +461,7 @@ export class Avatar {
     this.lastPos.copy(p);
     const sp = teleport ? 0 : Math.hypot(vx, vz);
     this.speed = damp(this.speed, sp, 10, dt);
+    this.speedNow = this.speed;
     if (sp > 0.3 && !teleport) {
       // Movement direction relative to facing: legs turn into strafes, backpedal reverses the cycle.
       const fx = -Math.sin(pose.yaw), fz = -Math.cos(pose.yaw);
@@ -463,6 +472,12 @@ export class Avatar {
       this.moveAngle = damp(this.moveAngle, fwd < -0.2 ? -ang : ang, 8, dt);
       const stride = this.speed > 5 ? 2.1 : 1.55;
       this.phase += ((fwd < -0.2 ? -1 : 1) * this.speed * dt) / stride;
+      // One footfall per half stride cycle (each foot), for footstep sounds.
+      const foot = Math.floor(this.phase * 2);
+      if (foot !== this.lastFoot) {
+        this.lastFoot = foot;
+        this.steps++;
+      }
     } else {
       this.moveAngle = damp(this.moveAngle, 0, 6, dt);
       this.phase = damp(this.phase, Math.round(this.phase * 2) / 2, 6, dt);
@@ -517,7 +532,7 @@ export class Avatar {
     // Name tag: only when close and in front of the camera.
     if (camPos) {
       const d = camPos.distanceTo(p);
-      this.tag.visible = d < 38;
+      this.tag.visible = this.tagWanted && d < 60;
       const s = Math.max(0.7, Math.min(1.5, d / 14));
       this.tag.scale.set(0.8 * s, 0.2 * s, 1);
       this.tag.position.y = this.bodyHeight + 0.18 + 0.1 * s;

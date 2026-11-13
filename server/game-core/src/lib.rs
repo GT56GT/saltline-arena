@@ -39,6 +39,41 @@ pub const GRAVITY: f32 = 21.0;
 pub const JUMP_SPEED: f32 = 6.480_741;
 pub const MAX_PITCH: f32 = 1.5;
 pub const MAX_HEALTH: f32 = 100.0;
+
+/// Climbing (mantling): jump facing a ledge whose top is this far above the feet...
+pub const MANTLE_MIN: f32 = 0.6;
+/// ...up to one shipping container (2.6 m) with a little slack. Double stacks are too tall.
+pub const MANTLE_MAX: f32 = 2.75;
+/// How far ahead to look for the ledge, beyond the body radius.
+pub const MANTLE_REACH: f32 = 0.5;
+
+/// An active climb: rise at `from`'s spot to the ledge height, then pull forward onto `to`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Mantle {
+    pub from: Vec3,
+    pub to: Vec3,
+    /// Seconds into the climb, and its total length.
+    pub t: f32,
+    pub dur: f32,
+}
+
+impl Mantle {
+    /// Position along the climb at time `t` (first lift, then over the edge).
+    pub fn at(&self, t: f32) -> Vec3 {
+        let k = (t / self.dur).clamp(0.0, 1.0);
+        let lift = 0.72;
+        if k < lift {
+            let u = k / lift;
+            let e = 1.0 - (1.0 - u) * (1.0 - u); // fast start, slows at the top
+            Vec3::new(self.from.x, self.from.y + (self.to.y + 0.04 - self.from.y) * e, self.from.z)
+        } else {
+            let u = (k - lift) / (1.0 - lift);
+            let e = u * u * (3.0 - 2.0 * u);
+            let top = self.to.y + 0.04 * (1.0 - e);
+            Vec3::new(self.from.x + (self.to.x - self.from.x) * e, top, self.from.z + (self.to.z - self.from.z) * e)
+        }
+    }
+}
 /// Kerbs, steps and low ledges up to this height are climbed automatically.
 pub const STEP_HEIGHT: f32 = 0.45;
 
@@ -99,6 +134,9 @@ pub struct PlayerState {
     pub fire_cd: f32,
     /// Seconds left on an active reload (0 = not reloading).
     pub reload_t: f32,
+    /// Climbing over a ledge (movement and shooting are locked meanwhile).
+    #[serde(default)]
+    pub mantle: Option<Mantle>,
 }
 
 impl PlayerState {
@@ -115,6 +153,7 @@ impl PlayerState {
             ammo: RIFLE.mag,
             fire_cd: 0.0,
             reload_t: 0.0,
+            mantle: None,
         }
     }
 
@@ -147,6 +186,26 @@ pub fn step_player(s: &mut PlayerState, input: &Input, map: &Map) {
     let inp = input.sanitized();
     s.yaw = inp.yaw;
     s.pitch = inp.pitch;
+
+    // Mid-climb: follow the climb path; nothing else moves the player.
+    if let Some(mut m) = s.mantle {
+        m.t += DT;
+        s.crouching = false;
+        if m.t >= m.dur {
+            s.pos = m.to;
+            let fwd = Vec3::new(m.to.x - m.from.x, 0.0, m.to.z - m.from.z).normalize_or_zero();
+            s.vel = fwd * 1.5;
+            s.on_ground = true;
+            s.mantle = None;
+        } else {
+            s.pos = m.at(m.t);
+            s.vel = Vec3::ZERO;
+            s.on_ground = false;
+            s.mantle = Some(m);
+        }
+        weapon_timers(s, &inp);
+        return;
+    }
     s.crouching = inp.crouch;
 
     // Wish direction on the ground plane, relative to where the player faces.
@@ -181,6 +240,16 @@ pub fn step_player(s: &mut PlayerState, input: &Input, map: &Map) {
     s.vel.x = horiz.x;
     s.vel.z = horiz.z;
 
+    // Jump facing a ledge: climb it. Otherwise an ordinary jump (from the ground only).
+    if inp.jump && !s.crouching && s.vel.y > -4.0 {
+        if let Some(m) = find_mantle(s.pos, fwd, map) {
+            s.mantle = Some(m);
+            s.vel = Vec3::ZERO;
+            s.on_ground = false;
+            weapon_timers(s, &inp);
+            return;
+        }
+    }
     if inp.jump && s.on_ground && !s.crouching {
         s.vel.y = JUMP_SPEED;
         s.on_ground = false;
@@ -249,8 +318,38 @@ pub fn step_player(s: &mut PlayerState, input: &Input, map: &Map) {
     p.x = p.x.clamp(map.min.x + PLAYER_RADIUS, map.max.x - PLAYER_RADIUS);
     p.z = p.z.clamp(map.min.z + PLAYER_RADIUS, map.max.z - PLAYER_RADIUS);
     s.pos = p;
+    weapon_timers(s, &inp);
+}
 
-    // Weapon timers.
+/// A ledge in front of `pos` that the player can climb onto, if any.
+pub fn find_mantle(pos: Vec3, fwd: Vec3, map: &Map) -> Option<Mantle> {
+    if fwd.length_squared() < 1e-6 {
+        return None;
+    }
+    let fwd = fwd.normalize();
+    // The highest box top just ahead, within climbing height.
+    let probe = pos + fwd * (PLAYER_RADIUS + MANTLE_REACH);
+    let top = map.floor_below(Vec3::new(probe.x, pos.y + MANTLE_MAX, probe.z), 0.08)?;
+    let rise = top - pos.y;
+    if !(MANTLE_MIN..=MANTLE_MAX + 0.05).contains(&rise) {
+        return None;
+    }
+    // Standing spot on the ledge: fully on its top, with room to stand (no stacked box above).
+    let reach = PLAYER_RADIUS + MANTLE_REACH + 0.1;
+    let to = Vec3::new(pos.x + fwd.x * reach, top, pos.z + fwd.z * reach);
+    let support = map.floor_below(to + Vec3::Y * 0.01, PLAYER_RADIUS * 0.5)?;
+    if (support - top).abs() > 0.02 || map.overlaps(to + Vec3::Y * 0.01, PLAYER_RADIUS, PLAYER_HEIGHT) {
+        return None;
+    }
+    // Room to rise straight up where we stand (no overhang or ceiling).
+    if map.overlaps(Vec3::new(pos.x, top + 0.05, pos.z), PLAYER_RADIUS * 0.9, PLAYER_HEIGHT) {
+        return None;
+    }
+    let dur = 0.32 + 0.13 * rise;
+    Some(Mantle { from: pos, to, t: 0.0, dur })
+}
+
+fn weapon_timers(s: &mut PlayerState, inp: &Input) {
     // Fire cooldown may run one tick negative so a 720 rpm rifle averages 12 shots a second
     // on a 30 Hz server (shots land 3, 2, 3, 2... ticks apart) instead of rounding down to 10.
     s.fire_cd = (s.fire_cd - DT).max(-DT);
@@ -392,5 +491,88 @@ mod tests {
         let (t, head) = ray_vs_player(chest, Vec3::NEG_Z, 100.0, &target).unwrap();
         assert!(!head && (t - (10.0 - PLAYER_RADIUS)).abs() < 0.05);
         assert!(ray_vs_player(chest, Vec3::X, 100.0, &target).is_none());
+    }
+}
+
+#[cfg(test)]
+mod mantle_tests {
+    use super::*;
+    use crate::map::Aabb;
+
+    fn map_with(boxes: Vec<Aabb>) -> Map {
+        let mut m = Map::yard();
+        m.boxes = boxes;
+        m
+    }
+    /// A 2.4 x 6 m container footprint, `h` tall, starting 1 m in front of the origin (toward -Z).
+    macro_rules! fat_container {
+        () => {
+            fn container(h: f32, stacked: bool) -> Vec<Aabb> {
+                let mut v = vec![Aabb::new(Vec3::new(-1.2, 0.0, -7.0), Vec3::new(1.2, h, -1.0))];
+                if stacked {
+                    v.push(Aabb::new(Vec3::new(-1.2, h, -7.0), Vec3::new(1.2, h * 2.0, -1.0)));
+                }
+                v
+            }
+        };
+    }
+    fat_container!();
+
+    fn run(map: &Map, mut s: PlayerState, ticks: u32, jump_at: u32) -> PlayerState {
+        for i in 0..ticks {
+            let inp = Input { seq: i + 1, mz: 1.0, jump: i == jump_at, ..Default::default() };
+            step_player(&mut s, &inp, map);
+        }
+        s
+    }
+
+    #[test]
+    fn climbs_onto_a_container() {
+        let map = map_with(container(2.6, false));
+        let s = PlayerState::spawn(Vec3::new(0.0, 0.0, 0.0), 0.0);
+        // Walk up to the side, jump: the climb starts and ends standing on top.
+        let s = run(&map, s, 50, 20);
+        assert!((s.pos.y - 2.6).abs() < 1e-3, "on top, y = {}", s.pos.y);
+        assert!(s.pos.z < -1.0, "over the edge, z = {}", s.pos.z);
+        assert!(s.on_ground && s.mantle.is_none());
+    }
+
+    #[test]
+    fn cannot_climb_double_stacks_or_without_jumping() {
+        let map = map_with(container(2.6, true));
+        let s = run(&map, PlayerState::spawn(Vec3::ZERO, 0.0), 40, 20);
+        assert!(s.pos.y < 1.2, "a 5.2 m stack is a wall, y = {}", s.pos.y);
+        let map = map_with(container(2.6, false));
+        let s = run(&map, PlayerState::spawn(Vec3::ZERO, 0.0), 40, 999);
+        assert_eq!(s.pos.y, 0.0, "walking into it does not climb");
+    }
+
+    #[test]
+    fn climb_is_deterministic_and_replayable() {
+        // Same inputs, same result: what the browser predicts is what the server computes.
+        let map = map_with(container(2.6, false));
+        let a = run(&map, PlayerState::spawn(Vec3::ZERO, 0.0), 30, 20);
+        let b = run(&map, PlayerState::spawn(Vec3::ZERO, 0.0), 30, 20);
+        assert_eq!(a.pos, b.pos);
+        assert!(a.mantle.is_some(), "still mid-climb 10 ticks after the jump");
+    }
+
+    #[test]
+    fn harbour_containers_are_climbable() {
+        // At least a few of the real map's single containers can be climbed from the ground.
+        let map = Map::harbour();
+        let mut found = 0;
+        for b in map.boxes.iter().filter(|b| b.min.y < 0.05 && (b.max.y - 2.6).abs() < 0.15) {
+            let c = (b.min + b.max) * 0.5;
+            // Stand just outside the long +X side, face -X.
+            let start = Vec3::new(b.max.x + PLAYER_RADIUS + 0.05, 0.0, c.z);
+            if map.overlaps(start, PLAYER_RADIUS, PLAYER_HEIGHT) {
+                continue;
+            }
+            if find_mantle(start, Vec3::new(-1.0, 0.0, 0.0), &map).is_some() {
+                found += 1;
+            }
+        }
+        assert!(found >= 3, "climbable harbour containers: {found}");
     }
 }
